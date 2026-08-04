@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-paper text-ink antialiased;
+}
+
+/* Thin, tasteful scrollbars for the chat/feed columns. */
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-ink/10;
+}
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  @apply bg-ink/20;
+}
