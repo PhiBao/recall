@@ -7,6 +7,12 @@ applications:
           commands:
             - corepack enable
             - pnpm install --frozen-lockfile
+            # Amplify injects branch env vars into the BUILD environment (from
+            # SSM), but the SSR compute runtime doesn't always receive them. So
+            # we materialize a .env.production here that Next.js loads at
+            # runtime. Values come from $VAR at build time — never committed.
+            - printenv DATABASE_URL AUTH_SECRET RECALL_AWS_ACCESS_KEY_ID RECALL_AWS_SECRET_ACCESS_KEY BEDROCK_API_KEY BEDROCK_TEXT_MODEL_ID BEDROCK_EMBED_MODEL_ID EMBED_DIMENSIONS AI_PROVIDER APP_URL > .env.production
+            - cat .env.production | sed 's/=.*/=set/'
         build:
           commands:
             - pnpm build
