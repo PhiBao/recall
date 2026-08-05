@@ -53,23 +53,51 @@ export GITHUB_TOKEN=ghp_xxx
 export AWS_PROFILE=apprunner
 export PATH="$HOME/.local/bin:$PATH"
 
-# 1. Print the create-app command (env vars derived from .env.local)
-pnpm exec tsx scripts/deploy-amplify.ts
+# 1. Create the two IAM roles Amplify needs (service role + SSR compute role)
+aws iam create-role --role-name AmplifyServiceRoleRecall \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"amplify.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+aws iam attach-role-policy --role-name AmplifyServiceRoleRecall \
+  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess-Amplify
+# (also create AmplifySSRComputeRole with bedrock:InvokeModel + ssm:GetParametersByPath
+#  on /amplify/<APP_ID>/* — see the policy in the run notes)
 
-# 2. Create the Amplify app (copy the printed command, or run the helper below)
+# 2. Create the Amplify app (env vars from .env.local, DB URL fixed)
 aws amplify create-app \
   --name recall \
   --repository https://github.com/PhiBao/recall \
   --platform WEB_COMPUTE \
   --access-token "$GITHUB_TOKEN" \
+  --iam-service-role-arn arn:aws:iam::381492277789:role/AmplifyServiceRoleRecall \
+  --compute-role-arn arn:aws:iam::381492277789:role/AmplifySSRComputeRole \
   --environment-variables "$(env | grep -E '^(DATABASE_URL|AUTH_SECRET|AWS_|BEDROCK_|EMBED_|AI_PROVIDER|NODE_ENV)=' | tr '\n' ',')"
 
-# 3. Create the branch — triggers the first build
-aws amplify create-branch --app-id <APP_ID> --branch-name main
+# 3. Create the branch, THEN set env vars again (create-branch drops them)
+aws amplify create-branch --app-id <APP_ID> --branch-name main \
+  --framework "Next.js - SSR"
+aws amplify update-branch --app-id <APP_ID> --branch-name main \
+  --environment-variables "$(cat /tmp/amplify-env.txt)"
 ```
 
 `deploy-amplify.ts` prints the exact command with env vars derived from
 `.env.local` (with the CockroachDB URL already fixed for the cloud).
+
+## Gotchas learned the hard way (read before deploying)
+
+1. **The SSR runtime doesn't reliably receive branch env vars.** Even with them
+   set at app + branch level, `process.env` in the running compute showed
+   everything MISSING. The fix that works: `amplify.yml` materializes
+   `.env.production` during `preBuild` from the build-time `$VAR`s (which
+   Amplify does inject once the service role can read SSM). Next.js loads that
+   file at runtime. Keep that step in `amplify.yml`.
+2. **The build failed to read SSM** ("Failed to set up process.env.secrets")
+   until the app had an **IAM service role** (`--iam-service-role-arn`) with
+   `AdministratorAccess-Amplify`. Without it, Amplify can't fetch env vars from
+   Parameter Store (`/amplify/<appId>/<branch>/*`).
+3. **Amplify rejects `AWS_`-prefixed env vars.** The app reads Bedrock IAM keys
+   from `RECALL_AWS_ACCESS_KEY_ID` / `RECALL_AWS_SECRET_ACCESS_KEY` for exactly
+   this reason.
+4. **The framework must be "Next.js - SSR"** (not "Next.js 15") or the deploy
+   step fails with a CustomerError even though the build succeeds.
 
 ## Post-deploy
 

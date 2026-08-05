@@ -90,14 +90,17 @@ async function main() {
     `--repository https://github.com/PhiBao/recall`,
     `--platform WEB_COMPUTE`,
     `--access-token ${token}`,
+    `--iam-service-role-arn arn:aws:iam::381492277789:role/AmplifyServiceRoleRecall`,
     `--compute-role-arn arn:aws:iam::381492277789:role/AmplifySSRComputeRole`,
     `--environment-variables "${envStr}"`,
   ].join(" ");
 
   console.log("[deploy] Run this to create the Amplify app:\n");
   console.log(`  AWS_PROFILE=apprunner ${cmd}\n`);
-  console.log("[deploy] Then create the branch (first build):");
-  console.log("  aws amplify create-branch --app-id <APP_ID> --branch-name main");
+  console.log("[deploy] Then create the branch (SSR framework is mandatory):");
+  console.log('  aws amplify create-branch --app-id <APP_ID> --branch-name main --framework "Next.js - SSR"');
+  console.log("[deploy] Then re-set env vars on the branch (create-branch drops them):");
+  console.log(`  aws amplify update-branch --app-id <APP_ID> --branch-name main --environment-variables "${envStr}"`);
   console.log("[deploy] Output env vars for reference (secrets redacted):");
   for (const [k, v] of Object.entries(envVars)) {
     const shown =
