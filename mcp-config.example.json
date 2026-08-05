@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cockroachdb-recall": {
+      "command": "npx",
+      "args": ["-y", "<package-from-cloud-console>", "https://cockroachlabs.cloud/mcp"],
+      "env": {
+        "COCKROACH_MCP_TOKEN": "<paste-from-cloud-console>"
+      }
+    }
+  }
+}

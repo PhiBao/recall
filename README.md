@@ -33,7 +33,10 @@ store to keep in sync**.
 ## How CockroachDB is used (the core of the entry)
 
 Recall puts **relational rows and vector embeddings in the same transactional
-database**:
+database**, and exposes that memory layer to *two* agents. This entry uses
+**two CockroachDB AI tools**:
+
+### 1. Distributed Vector Indexing — the memory engine
 
 - `person`, `memory`, `fact`, `commitment` — normalized relational data.
 - `memory_embedding` uses the native **`VECTOR(1024)` type** with a
@@ -49,6 +52,18 @@ database**:
 
 Every recall answer returns **citations** to the source memory rows, so the
 answer is auditable and never fabricated.
+
+### 2. Managed MCP Server — the ops agent
+
+The **CockroachDB Cloud Managed MCP Server** (`https://cockroachlabs.cloud/mcp`)
+connects a *second* AI agent (Claude Code, Cursor, VS Code) directly to the
+cluster — **read-only by default, fully audited, zero custom proxy**. This ops
+agent *inspects* the memory engine: querying the audit log, checking data
+health, surfacing insights about the user's network. It can never modify data.
+
+Two agents, one memory layer — that's the production-grade architecture the
+hackathon is asking for. See **[docs/ops-agent.md](docs/ops-agent.md)** for the
+setup, example queries, and the demo script.
 
 ---
 
@@ -94,6 +109,33 @@ scripts/
   migrate.ts             Apply schema        (pnpm db:migrate)
   seed.ts                Seed demo memories  (pnpm db:seed)
   run-nudges.ts          Daily reconnect nudges (pnpm nudge:run)
+  verify-embeddings.ts   Prove real Titan path  (pnpm embed:verify)
+  reseed-embeddings.ts   Regenerate vectors    (pnpm db:seed-embeddings)
+docs/
+  ops-agent.md           MCP Server ops-agent workflow + demo script
+  embedding-fix.md       Enabling real Titan embeddings
+```
+
+### Two agents, one memory layer
+
+```
+ ┌──────────────┐        capture / recall         ┌─────────────────────────┐
+ │  Recall UI   │ ──────────────────────────────► │                         │
+ │  (Next.js)   │ ◄────────────────────────────── │     CockroachDB Cloud   │
+ └──────────────┘        cited answers            │                         │
+                                                 │  person / memory / fact │
+ ┌──────────────┐   read-only, audited queries    │  commitment / audit_log │
+ │  Ops Agent   │ ──────────────────────────────► │  memory_embedding       │
+ │ (Claude/     │ ◄────────────────────────────── │    (VECTOR + vec index) │
+ │  Cursor via  │        insights                 │                         │
+ │  MCP Server) │                                └─────────────────────────┘
+ └──────────────┘                                            │
+                                                              │ embeddings
+                                                              ▼
+                                                       ┌─────────────┐
+                                                       │ AWS Bedrock │
+                                                       │ (Titan v2)  │
+                                                       └─────────────┘
 ```
 
 ---
@@ -170,9 +212,27 @@ rest are future work.
 
 ---
 
+## AWS services used
+
+- **Amazon Bedrock — Mantle endpoint** (Chat Completions): powers memory
+  extraction and recall synthesis via Voxtral Mini 3B, authenticated with a
+  Bedrock API key. Answers are grounded only in retrieved memories.
+- **Amazon Bedrock — Titan Text Embeddings v2**: produces the 1024-dim vectors
+  stored in the CockroachDB vector index. Requires IAM access keys.
+- **AWS Lambda + EventBridge** *(deployment)*: runs the daily nudge cron
+  serverlessly (see `infra/nudge-lambda.ts`). The proactive "Today" feed is an
+  agent that acts without being asked.
+- **AWS App Runner** *(deployment)*: hosts the Next.js app from a container on
+  AWS, with a live demo URL.
+
+> The two required AWS categories above (Bedrock + one compute/service) are met.
+> Lambda and App Runner are deployment scaffolding — included so the demo runs
+> on AWS end to end.
+
 ## Tech
 Next.js 15 · React 19 · TypeScript (strict) · Tailwind · CockroachDB (relational +
-distributed vector index) · AWS Bedrock (Claude + Titan) · `pg` · `jose` · Zod.
+distributed vector index · managed MCP Server) · AWS Bedrock (Mantle + Titan) ·
+AWS Lambda · AWS App Runner · `pg` · `jose` · Zod.
 
 ## License
 MIT — see [LICENSE](./LICENSE).
