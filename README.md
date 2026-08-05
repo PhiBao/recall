@@ -54,17 +54,21 @@ answer is auditable and never fabricated.
 
 ## AWS Bedrock
 
-- **Extraction & recall synthesis:** Anthropic Claude on Bedrock (`InvokeModel`)
-  turns raw text into structured memory, and answers questions **only** from
-  retrieved memories (grounded, with a strict "I don't have a memory of that yet"
-  fallback — no hallucinated relationships).
+- **Extraction & recall synthesis:** Amazon Bedrock **Mantle** endpoint
+  (OpenAI-compatible Chat Completions) authenticated with a single **Bedrock
+  API key**. Default model is Voxtral Mini 3B — the cheapest model that reliably
+  produces the structured-extraction JSON. Answers questions **only** from
+  retrieved memories (grounded, with a strict "I don't have a memory of that
+  yet" fallback — no hallucinated relationships).
 - **Embeddings:** Amazon Titan Text Embeddings v2 (1024-dim) → stored in the
-  CockroachDB vector index.
+  CockroachDB vector index. Requires IAM access keys (the API key alone can't
+  call the embeddings API); without them Recall uses a deterministic local
+  hash embedding so semantic recall still works.
 
-> **No AWS credentials? It still runs.** Set `AI_PROVIDER=mock` (or just leave AWS
-> keys blank) and Recall uses a deterministic local extractor + hash embedding so
-> you can run the full product and demo end-to-end. The real Bedrock path is used
-> automatically when credentials are present.
+> **No AWS credentials? It still runs.** Set `AI_PROVIDER=mock` (or just leave
+> the Bedrock API key / access keys blank) and Recall uses a deterministic local
+> extractor + hash embedding so you can run the full product and demo
+> end-to-end. The real Bedrock path is used automatically when auth is present.
 
 ---
 
@@ -82,7 +86,7 @@ components/
 lib/
   schema.sql             CockroachDB schema incl. VECTOR INDEX
   db.ts                  Pooled, parameterized SQL + transaction helper
-  ai.ts                  Bedrock (Claude + Titan) with deterministic mock fallback
+  ai.ts                  Bedrock Mantle (Voxtral Mini) + Titan with deterministic fallback
   memory.ts              Domain logic: captureMemory() + recall() (hybrid query)
   auth.ts                Signed httpOnly session; strict per-user isolation
   env.ts                 Zod-validated, fail-fast config
@@ -107,7 +111,7 @@ scripts/
 ```bash
 cp .env.example .env.local
 # set DATABASE_URL, AUTH_SECRET (openssl rand -base64 48)
-# optional: AWS Bedrock creds — or set AI_PROVIDER=mock to run without them
+# optional: Bedrock API key (or IAM access keys) — or set AI_PROVIDER=mock to run without
 ```
 
 ### 3. Install, migrate, seed

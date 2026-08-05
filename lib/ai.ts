@@ -12,10 +12,50 @@ import type { ExtractedMemory, MemoryKind } from "./types";
  *   2. embed          — produce an embedding vector for semantic recall
  *   3. synthesizeRecall — answer a question grounded ONLY in retrieved memories
  *
- * When AWS credentials are absent (or AI_PROVIDER=mock) we use a deterministic
- * local implementation so the product is fully runnable for local dev and the
- * demo, without silently faking the "real" path.
+ * Chat uses the Bedrock Mantle endpoint (OpenAI-compatible Chat Completions),
+ * authenticated with a single Bedrock API key — the simplest auth path.
+ * Embeddings use Amazon Titan via the native bedrock-runtime API, which
+ * requires IAM access keys; without them we fall back to a deterministic local
+ * hash embedding (documented, never silently faked). If no Bedrock auth is
+ * configured at all (or AI_PROVIDER=mock), everything uses the deterministic
+ * local implementation so the product stays fully runnable for local dev.
  */
+
+const REQUEST_TIMEOUT_MS = 60_000;
+
+// --- Bedrock Mantle: OpenAI-compatible Chat Completions -------------------
+
+async function chatJSON(system: string, user: string): Promise<string> {
+  const e = env();
+  const res = await fetch(
+    `https://bedrock-mantle.${e.AWS_REGION}.api.aws/v1/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${e.BEDROCK_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: e.BEDROCK_TEXT_MODEL_ID,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        max_tokens: 1024,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Bedrock ${res.status}: ${detail.slice(0, 200)}`);
+  }
+  const json = await res.json();
+  return (json?.choices?.[0]?.message?.content ?? "").trim();
+}
+
+// --- Bedrock: Titan embeddings (needs IAM credentials) --------------------
 
 let _client: BedrockRuntimeClient | null = null;
 function bedrock(): BedrockRuntimeClient {
@@ -23,39 +63,13 @@ function bedrock(): BedrockRuntimeClient {
     const e = env();
     _client = new BedrockRuntimeClient({
       region: e.AWS_REGION,
-      credentials:
-        e.AWS_ACCESS_KEY_ID && e.AWS_SECRET_ACCESS_KEY
-          ? {
-              accessKeyId: e.AWS_ACCESS_KEY_ID,
-              secretAccessKey: e.AWS_SECRET_ACCESS_KEY,
-            }
-          : undefined,
+      credentials: {
+        accessKeyId: e.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: e.AWS_SECRET_ACCESS_KEY!,
+      },
     });
   }
   return _client;
-}
-
-// --- Bedrock: Anthropic Claude messages API -------------------------------
-
-async function claudeJSON(system: string, user: string): Promise<string> {
-  const e = env();
-  const body = {
-    anthropic_version: "bedrock-2023-05-31",
-    max_tokens: 1024,
-    temperature: 0,
-    system,
-    messages: [{ role: "user", content: [{ type: "text", text: user }] }],
-  };
-  const cmd = new InvokeModelCommand({
-    modelId: e.BEDROCK_TEXT_MODEL_ID,
-    contentType: "application/json",
-    accept: "application/json",
-    body: JSON.stringify(body),
-  });
-  const res = await bedrock().send(cmd);
-  const decoded = JSON.parse(new TextDecoder().decode(res.body));
-  const text: string = decoded?.content?.[0]?.text ?? "";
-  return text;
 }
 
 // --- Bedrock: Titan embeddings --------------------------------------------
@@ -127,7 +141,7 @@ Rules:
 export async function extractMemory(text: string): Promise<ExtractedMemory> {
   if (useMockAI()) return mockExtract(text);
   try {
-    const raw = await claudeJSON(EXTRACT_SYSTEM, text);
+    const raw = await chatJSON(EXTRACT_SYSTEM, text);
     const parsed = extractionSchema.safeParse(safeParseJSON(raw));
     if (parsed.success) return parsed.data;
     // Model returned unexpected shape — fall back to a minimal capture so we
@@ -141,7 +155,12 @@ export async function extractMemory(text: string): Promise<ExtractedMemory> {
 
 export async function embed(text: string): Promise<number[]> {
   const e = env();
-  if (useMockAI()) return mockEmbed(text, e.EMBED_DIMENSIONS);
+  // Titan embeddings run on bedrock-runtime and need IAM credentials; a
+  // Bedrock API key alone cannot embed, so fall back to the deterministic
+  // local embedding in that case.
+  if (useMockAI() || !e.AWS_ACCESS_KEY_ID || !e.AWS_SECRET_ACCESS_KEY) {
+    return mockEmbed(text, e.EMBED_DIMENSIONS);
+  }
   try {
     const v = await titanEmbed(text);
     if (v.length === e.EMBED_DIMENSIONS) return v;
@@ -150,7 +169,16 @@ export async function embed(text: string): Promise<number[]> {
     );
     return mockEmbed(text, e.EMBED_DIMENSIONS);
   } catch (err) {
-    console.error("[ai] embed failed, degrading:", errMsg(err));
+    // Bedrock-runtime (and so Titan embeddings) is often blocked by the AWS
+    // account while the Mantle chat endpoint remains available. Explain it so
+    // the fallback is never mistaken for a bug.
+    console.error(
+      "[ai] embed failed, degrading to local hash embedding:",
+      errMsg(err),
+      "| Real Titan embeddings need bedrock:InvokeModel on",
+      e.BEDROCK_EMBED_MODEL_ID,
+      "(enable it in Bedrock Model access + IAM)",
+    );
     return mockEmbed(text, e.EMBED_DIMENSIONS);
   }
 }
@@ -176,7 +204,7 @@ export async function synthesizeRecall(
       )
       .join("\n");
     const user = `Memories:\n${context}\n\nQuestion: ${question}`;
-    const answer = await claudeJSON(RECALL_SYSTEM, user);
+    const answer = await chatJSON(RECALL_SYSTEM, user);
     return answer.trim() || mockRecall(question, memories);
   } catch (err) {
     console.error("[ai] synthesizeRecall failed, degrading:", errMsg(err));
