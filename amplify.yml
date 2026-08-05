@@ -11,8 +11,7 @@ applications:
             # SSM), but the SSR compute runtime doesn't always receive them. So
             # we materialize a .env.production here that Next.js loads at
             # runtime. Values come from $VAR at build time — never committed.
-            - printenv DATABASE_URL AUTH_SECRET RECALL_AWS_ACCESS_KEY_ID RECALL_AWS_SECRET_ACCESS_KEY BEDROCK_API_KEY BEDROCK_TEXT_MODEL_ID BEDROCK_EMBED_MODEL_ID EMBED_DIMENSIONS AI_PROVIDER APP_URL > .env.production
-            - cat .env.production | sed 's/=.*/=set/'
+            - for var in DATABASE_URL AUTH_SECRET RECALL_AWS_ACCESS_KEY_ID RECALL_AWS_SECRET_ACCESS_KEY BEDROCK_API_KEY BEDROCK_TEXT_MODEL_ID BEDROCK_EMBED_MODEL_ID EMBED_DIMENSIONS AI_PROVIDER; do if [ -n "${!var:-}" ]; then printf '%s=%s\n' "$var" "${!var}" >> .env.production; else printf '%s=set-but-empty\n' "$var" >> .env.production; fi; done
         build:
           commands:
             - pnpm build
