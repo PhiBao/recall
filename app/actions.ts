@@ -14,6 +14,8 @@ import {
   recall,
   updateCommitmentStatus,
 } from "@/lib/memory";
+import { userActionLimiter } from "@/lib/rate-limit";
+import { log } from "@/lib/log";
 import type { RecallAnswer } from "@/lib/types";
 
 /**
@@ -30,12 +32,13 @@ export async function signInAction(formData: FormData): Promise<void> {
     redirect("/?error=invalid_email");
   }
   const name = nameSchema.safeParse(formData.get("name") || undefined);
-  const userId = await findOrCreateUser(
-    email.data,
-    name.success ? name.data : undefined,
-  );
-  await setSessionCookie(userId);
-  redirect("/app");
+    const userId = await findOrCreateUser(
+      email.data,
+      name.success ? name.data : undefined,
+    );
+    await setSessionCookie(userId);
+    log.info("sign_in", { userId });
+    redirect("/app");
 }
 
 export async function signOutAction(): Promise<void> {
@@ -48,15 +51,19 @@ const captureSchema = z.string().min(1).max(4000);
 export async function captureAction(
   rawText: string,
 ): Promise<{ ok: true; summary: string } | { ok: false; error: string }> {
+  const userId = await requireUserId();
   try {
-    const userId = await requireUserId();
+    if (!userActionLimiter.check(userId)) {
+      return { ok: false, error: "You're saving memories quickly — please slow down a moment." };
+    }
     const parsed = captureSchema.safeParse(rawText);
     if (!parsed.success) return { ok: false, error: "Please write a little more." };
     const result = await captureMemory(userId, parsed.data);
     revalidatePath("/app");
+    log.info("capture", { userId, memoryId: result.memory.id, facts: result.factsAdded, commitments: result.commitmentsAdded });
     return { ok: true, summary: result.summary };
   } catch (err) {
-    console.error("[captureAction]", err);
+    log.error("capture_failed", { userId, error: err instanceof Error ? err.message : String(err) });
     return { ok: false, error: "Something went wrong saving that memory." };
   }
 }
@@ -66,14 +73,18 @@ const recallSchema = z.string().min(1).max(4000);
 export async function recallAction(
   question: string,
 ): Promise<{ ok: true; result: RecallAnswer } | { ok: false; error: string }> {
+  const userId = await requireUserId();
   try {
-    const userId = await requireUserId();
+    if (!userActionLimiter.check(userId)) {
+      return { ok: false, error: "You're asking a lot of questions — give it a beat." };
+    }
     const parsed = recallSchema.safeParse(question);
     if (!parsed.success) return { ok: false, error: "Please ask a question." };
     const result = await recall(userId, parsed.data);
+    log.info("recall", { userId, citations: result.citations.length });
     return { ok: true, result };
   } catch (err) {
-    console.error("[recallAction]", err);
+    log.error("recall_failed", { userId, error: err instanceof Error ? err.message : String(err) });
     return { ok: false, error: "Something went wrong searching your memory." };
   }
 }
@@ -84,15 +95,16 @@ export async function commitmentAction(
   commitmentId: string,
   status: string,
 ): Promise<{ ok: boolean }> {
+  const userId = await requireUserId();
   try {
-    const userId = await requireUserId();
     const s = statusSchema.parse(status);
     const id = z.string().uuid().parse(commitmentId);
     await updateCommitmentStatus(userId, id, s);
     revalidatePath("/app");
+    log.info("commitment_status", { userId, commitmentId: id, status: s });
     return { ok: true };
   } catch (err) {
-    console.error("[commitmentAction]", err);
+    log.error("commitment_status_failed", { userId, commitmentId, status, error: err instanceof Error ? err.message : String(err) });
     return { ok: false };
   }
 }

@@ -202,13 +202,18 @@ Security is treated as an engineering requirement:
 - **Grounded AI:** recall answers are constrained to retrieved memories and cite
   their sources; the model is instructed never to invent relationships.
 - **Audit log:** captures and status changes are recorded in `audit_log`.
+- **Rate limiting:** capture and recall are bounded per user (token bucket,
+  30 req/min) so a runaway client can't exhaust Bedrock quota or spam the DB.
+- **Structured logging:** every sign-in, capture, recall, and status change
+  emits one JSON line (`lib/log.ts`) with the user id and outcome — ready for
+  CloudWatch Logs indexing, no prose parsing.
 - **Fail-fast config:** `lib/env.ts` validates env at startup so misconfiguration
   can't silently ship.
 
 **MVP non-goals (documented, not accidental):** email magic-link *verification*
 is stubbed (sign-in issues a session directly) for a frictionless demo; add a
-one-time-link step before production. Rate limiting and per-field encryption at
-rest are future work.
+one-time-link step before production. Per-field encryption at rest is future
+work.
 
 ---
 
