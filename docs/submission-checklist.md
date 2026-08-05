@@ -8,8 +8,9 @@ repo; items marked **[action]** need a one-time action before submitting.
 - [x] **Public open-source repo** with a detectable license
   - This repo, MIT license (`LICENSE`), visible in the GitHub About section.
 - [x] **Functional demo URL**
-  - Deploy on AWS Amplify Hosting (`docs/deploy-amplify.md`). The URL goes in Devpost.
-  - **[action]** Deploy it and paste the URL here: `________________`
+  - Deployed on AWS Amplify Hosting (`docs/deploy-amplify.md`).
+  - **Live URL:** `https://main.d1920llq7pdf9e.amplifyapp.com` (verified
+    `/api/health` = 200, DB connected, vector index present).
 - [ ] **Video (< 3 min)** on YouTube or Vimeo, demonstrating the submission and
       the CockroachDB memory layer at work.
   - **[action]** Follow `docs/video-script.md`, record, upload, paste URL here:
