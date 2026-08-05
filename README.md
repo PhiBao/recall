@@ -123,13 +123,13 @@ docs/
  │  Recall UI   │ ──────────────────────────────► │                         │
  │  (Next.js)   │ ◄────────────────────────────── │     CockroachDB Cloud   │
  └──────────────┘        cited answers            │                         │
-                                                 │  person / memory / fact │
+                                                  │  person / memory / fact │
  ┌──────────────┐   read-only, audited queries    │  commitment / audit_log │
  │  Ops Agent   │ ──────────────────────────────► │  memory_embedding       │
  │ (Claude/     │ ◄────────────────────────────── │    (VECTOR + vec index) │
  │  Cursor via  │        insights                 │                         │
- │  MCP Server) │                                └─────────────────────────┘
- └──────────────┘                                            │
+ │  MCP Server) │                                 └─────────────────────────┘
+ └──────────────┘                                             │
                                                               │ embeddings
                                                               ▼
                                                        ┌─────────────┐
