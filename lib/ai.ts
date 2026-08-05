@@ -3,7 +3,7 @@ import {
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { z } from "zod";
-import { env, useMockAI } from "./env";
+import { env, isMockAI } from "./env";
 import type { ExtractedMemory, MemoryKind } from "./types";
 
 /**
@@ -139,7 +139,7 @@ Rules:
 // --- Public API -----------------------------------------------------------
 
 export async function extractMemory(text: string): Promise<ExtractedMemory> {
-  if (useMockAI()) return mockExtract(text);
+  if (isMockAI()) return mockExtract(text);
   try {
     const raw = await chatJSON(EXTRACT_SYSTEM, text);
     const parsed = extractionSchema.safeParse(safeParseJSON(raw));
@@ -158,7 +158,7 @@ export async function embed(text: string): Promise<number[]> {
   // Titan embeddings run on bedrock-runtime and need IAM credentials; a
   // Bedrock API key alone cannot embed, so fall back to the deterministic
   // local embedding in that case.
-  if (useMockAI() || !e.AWS_ACCESS_KEY_ID || !e.AWS_SECRET_ACCESS_KEY) {
+  if (isMockAI() || !e.AWS_ACCESS_KEY_ID || !e.AWS_SECRET_ACCESS_KEY) {
     return mockEmbed(text, e.EMBED_DIMENSIONS);
   }
   try {
@@ -195,7 +195,7 @@ export async function synthesizeRecall(
   if (memories.length === 0) {
     return "I don't have a memory of that yet.";
   }
-  if (useMockAI()) return mockRecall(question, memories);
+  if (isMockAI()) return mockRecall(question, memories);
   try {
     const context = memories
       .map(

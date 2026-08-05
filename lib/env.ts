@@ -45,7 +45,7 @@ export function env(): Env {
 }
 
 /** True when no Bedrock auth is configured or AI_PROVIDER=mock — use deterministic local AI. */
-export function useMockAI(): boolean {
+export function isMockAI(): boolean {
   const e = env();
   if (e.AI_PROVIDER === "mock") return true;
   if (e.BEDROCK_API_KEY) return false;
