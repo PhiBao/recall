@@ -8,7 +8,7 @@ repo; items marked **[action]** need a one-time action before submitting.
 - [x] **Public open-source repo** with a detectable license
   - This repo, MIT license (`LICENSE`), visible in the GitHub About section.
 - [x] **Functional demo URL**
-  - Deploy on AWS App Runner (`docs/deploy-aws.md`). The URL goes in Devpost.
+  - Deploy on AWS Amplify Hosting (`docs/deploy-amplify.md`). The URL goes in Devpost.
   - **[action]** Deploy it and paste the URL here: `________________`
 - [ ] **Video (< 3 min)** on YouTube or Vimeo, demonstrating the submission and
       the CockroachDB memory layer at work.
@@ -28,7 +28,7 @@ repo; items marked **[action]** need a one-time action before submitting.
      via Voxtral Mini, Bedrock API key auth.
   2. **Amazon Bedrock — Titan Text Embeddings v2**: 1024-dim vectors for the
      vector index, IAM auth.
-  3. **AWS App Runner**: hosts the demo from a container.
+  3. **AWS Amplify Hosting**: deploys the live demo from the GitHub repo.
   4. **AWS Lambda + EventBridge**: daily nudge cron, serverless.
 - [x] **Clear README** with setup/run instructions (`README.md`).
 

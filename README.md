@@ -224,20 +224,20 @@ work.
   Bedrock API key. Answers are grounded only in retrieved memories.
 - **Amazon Bedrock — Titan Text Embeddings v2**: produces the 1024-dim vectors
   stored in the CockroachDB vector index. Requires IAM access keys.
-- **AWS Lambda + EventBridge** *(deployment)*: runs the daily nudge cron
+- **AWS Amplify Hosting**: deploys the Next.js app from the GitHub repo
+  (no Docker/ECR) and serves the live demo URL — see
+  `docs/deploy-amplify.md`.
+- **AWS Lambda + EventBridge** *(optional)*: runs the daily nudge cron
   serverlessly (see `infra/nudge-lambda.ts`). The proactive "Today" feed is an
   agent that acts without being asked.
-- **AWS App Runner** *(deployment)*: hosts the Next.js app from a container on
-  AWS, with a live demo URL.
 
-> The two required AWS categories above (Bedrock + one compute/service) are met.
-> Lambda and App Runner are deployment scaffolding — included so the demo runs
-> on AWS end to end.
+> The required AWS category (Bedrock) is met, and the app is deployed on AWS
+> via Amplify Hosting so judges get a live URL.
 
 ## Tech
 Next.js 15 · React 19 · TypeScript (strict) · Tailwind · CockroachDB (relational +
 distributed vector index · managed MCP Server) · AWS Bedrock (Mantle + Titan) ·
-AWS Lambda · AWS App Runner · `pg` · `jose` · Zod.
+AWS Lambda · AWS Amplify Hosting · `pg` · `jose` · Zod.
 
 ## License
 MIT — see [LICENSE](./LICENSE).

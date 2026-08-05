@@ -10,7 +10,7 @@ as you go.
 - [ ] Real Titan embeddings enabled and verified (`pnpm embed:verify` → PASS).
 - [ ] Embeddings re-seeded (`pnpm db:seed-embeddings`).
 - [ ] Demo data seeded (`pnpm db:seed`).
-- [ ] App deployed on App Runner (or `pnpm dev` locally — but a live AWS URL is
+- [ ] App deployed on Amplify Hosting (or `pnpm dev` locally — but a live AWS URL is
       stronger).
 - [ ] MCP server enabled in the Cloud Console for the ops-agent segment.
 - [ ] A Claude Code / Cursor window open for the MCP segment.
@@ -79,7 +79,7 @@ Show the architecture diagram (in the README / a slide).
 > "One CockroachDB cluster: relational memory plus a distributed vector index,
 > written in one transaction. Semantic recall with citations. A second agent
 > inspecting it via MCP. Extraction and embeddings on AWS Bedrock. Deployed on
-> App Runner with the nudge cron on Lambda. That's Recall."
+> Amplify Hosting, with the nudge cron on Lambda. That's Recall."
 
 ## After recording
 
