@@ -92,3 +92,4 @@ aws amplify create-branch --app-id <APP_ID> --branch-name main
 > The hackathon rule is "deployed on AWS" — Amplify Hosting satisfies it, and
 > the app itself uses Bedrock (the required AWS service). Lambda runs the
 > proactive nudge agent.
+
