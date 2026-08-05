@@ -57,9 +57,11 @@ async function main() {
   const envVars = {
     DATABASE_URL: fixDatabaseUrl(env["DATABASE_URL"] ?? ""),
     AUTH_SECRET: env["AUTH_SECRET"] ?? "",
-    AWS_REGION: env["AWS_REGION"] ?? "us-east-1",
-    AWS_ACCESS_KEY_ID: env["AWS_ACCESS_KEY_ID"] ?? "",
-    AWS_SECRET_ACCESS_KEY: env["AWS_SECRET_ACCESS_KEY"] ?? "",
+    // Amplify reserves the "AWS_" env prefix (including AWS_REGION), so the
+    // Bedrock IAM keys go in under RECALL_AWS_* (lib/ai.ts prefers them,
+    // falls back to AWS_* locally) and the region uses the code default.
+    RECALL_AWS_ACCESS_KEY_ID: env["AWS_ACCESS_KEY_ID"] ?? "",
+    RECALL_AWS_SECRET_ACCESS_KEY: env["AWS_SECRET_ACCESS_KEY"] ?? "",
     BEDROCK_API_KEY: env["BEDROCK_API_KEY"] ?? "",
     BEDROCK_TEXT_MODEL_ID: env["BEDROCK_TEXT_MODEL_ID"] ?? "mistral.voxtral-mini-3b-2507",
     BEDROCK_EMBED_MODEL_ID: env["BEDROCK_EMBED_MODEL_ID"] ?? "amazon.titan-embed-text-v2:0",
@@ -88,6 +90,7 @@ async function main() {
     `--repository https://github.com/PhiBao/recall`,
     `--platform WEB_COMPUTE`,
     `--access-token ${token}`,
+    `--compute-role-arn arn:aws:iam::381492277789:role/AmplifySSRComputeRole`,
     `--environment-variables "${envStr}"`,
   ].join(" ");
 

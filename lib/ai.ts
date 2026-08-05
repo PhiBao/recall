@@ -3,7 +3,7 @@ import {
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { z } from "zod";
-import { env, isMockAI } from "./env";
+import { env, isMockAI, onAwsRuntime } from "./env";
 import type { ExtractedMemory, MemoryKind } from "./types";
 
 /**
@@ -61,12 +61,23 @@ let _client: BedrockRuntimeClient | null = null;
 function bedrock(): BedrockRuntimeClient {
   if (!_client) {
     const e = env();
+    // Explicit keys win; if they're absent (e.g. running on a compute role in
+    // the cloud), the SDK falls back to the default credential provider chain
+    // (instance/ECS role). RECALL_AWS_* avoids the reserved AWS_ prefix that
+    // hosting platforms like Amplify reject.
+    const accessKeyId = e.RECALL_AWS_ACCESS_KEY_ID ?? e.AWS_ACCESS_KEY_ID;
+    const secretAccessKey =
+      e.RECALL_AWS_SECRET_ACCESS_KEY ?? e.AWS_SECRET_ACCESS_KEY;
     _client = new BedrockRuntimeClient({
       region: e.AWS_REGION,
-      credentials: {
-        accessKeyId: e.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: e.AWS_SECRET_ACCESS_KEY!,
-      },
+      ...(accessKeyId && secretAccessKey
+        ? {
+            credentials: {
+              accessKeyId,
+              secretAccessKey,
+            },
+          }
+        : {}),
     });
   }
   return _client;
@@ -157,8 +168,14 @@ export async function embed(text: string): Promise<number[]> {
   const e = env();
   // Titan embeddings run on bedrock-runtime and need IAM credentials; a
   // Bedrock API key alone cannot embed, so fall back to the deterministic
-  // local embedding in that case.
-  if (isMockAI() || !e.AWS_ACCESS_KEY_ID || !e.AWS_SECRET_ACCESS_KEY) {
+  // local embedding in that case. On compute-role deployments the SDK resolves
+  // credentials from the role, so only skip when neither key form is set.
+  const hasExplicitKeys =
+    !!e.AWS_ACCESS_KEY_ID ||
+    !!e.AWS_SECRET_ACCESS_KEY ||
+    !!e.RECALL_AWS_ACCESS_KEY_ID ||
+    !!e.RECALL_AWS_SECRET_ACCESS_KEY;
+  if (isMockAI() || (!hasExplicitKeys && !onAwsRuntime())) {
     return mockEmbed(text, e.EMBED_DIMENSIONS);
   }
   try {
