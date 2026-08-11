@@ -55,6 +55,11 @@ database**, and exposes that memory layer to *two* agents. This entry uses
 - **Recall is one query:** semantic similarity (`embedding <-> $query`) is joined
   to `person`/`memory` and filtered by `user_id` in a single SQL statement —
   hybrid vector + relational retrieval, strongly consistent, on one engine.
+- **Resilient retrieval:** when real embeddings aren't available (no Bedrock
+  model access), Recall automatically swaps to an **LLM reranker** — the text
+  model (Bedrock API key only) ranks a recent-memory pool by meaning, blended
+  with KNN top candidates. Paraphrase recall ("who's recruiting frontend
+  people?" → "hiring senior React engineers") works in both modes.
 
 Every recall answer returns **citations** to the source memory rows, so the
 answer is auditable and never fabricated.
