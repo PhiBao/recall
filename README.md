@@ -14,6 +14,12 @@ thing runs on **one CockroachDB cluster** that stores *both* the structured
 relational memory *and* the semantic vector memory, with **no second vector
 store to keep in sync**.
 
+> ### 🚀 Live demo
+> **https://main.d1920llq7pdf9e.amplifyapp.com** — deployed on AWS Amplify
+> Hosting, backed by CockroachDB Cloud (relational + distributed vector index)
+> and Amazon Bedrock. Sign in with any email (or `demo@recall.app` for seeded
+> data). Health: `GET /api/health`.
+
 ---
 
 ## Why this is a real product (not a dashboard)
