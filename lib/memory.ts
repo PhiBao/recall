@@ -1,5 +1,11 @@
 import { query, queryOne, withTransaction, toVectorLiteral } from "./db";
-import { extractMemory, embed, synthesizeRecall } from "./ai";
+import {
+  extractMemory,
+  embed,
+  isRealEmbedding,
+  rerankRecall,
+  synthesizeRecall,
+} from "./ai";
 import type {
   Commitment,
   Fact,
@@ -180,9 +186,11 @@ export async function recall(
 
   const embedding = await embed(q);
   const vectorLiteral = toVectorLiteral(embedding);
+  const realEmbedding = isRealEmbedding(embedding);
 
   // The core query: vector similarity (<-> = L2 distance) + relational join,
-  // all in one CockroachDB statement, all scoped by user_id.
+  // all in one CockroachDB statement, all scoped by user_id. Pull a wider
+  // candidate pool (×2 limit) so the reranker has something to work with.
   const rows = await query<{
     memory_id: string;
     person_id: string | null;
@@ -203,10 +211,60 @@ export async function recall(
       WHERE me.user_id = $1
       ORDER BY me.embedding <-> $2::vector
       LIMIT $3`,
-    [userId, vectorLiteral, limit],
+    [userId, vectorLiteral, limit * 3],
   );
 
-  const citations: RecallCitation[] = rows.map((r) => ({
+  // If the embeddings are the deterministic hash fallback (keyword matching),
+  // the KNN ordering is meaningless — the model should judge candidates on
+  // content alone. Fetch the user's most recent memories as a neutral pool,
+  // then rerank with the text model so paraphrases ("recruiting backend devs")
+  // still surface the right memory ("hiring senior React engineers"). Real
+  // vector embeddings keep the exact KNN path.
+  let selected = rows;
+  if (!realEmbedding) {
+    const pool = await query<
+      (typeof rows)[number]
+    >(
+      `SELECT m.id AS memory_id,
+              m.person_id,
+              p.name AS person_name,
+              m.content,
+              m.occurred_at,
+              0 AS distance
+         FROM memory m
+         LEFT JOIN person p ON p.id = m.person_id
+        WHERE m.user_id = $1
+        ORDER BY m.occurred_at DESC
+        LIMIT $2`,
+      [userId, Math.max(limit * 3, 12)],
+    );
+    const topIds = await rerankRecall(
+      q,
+      pool.map((r) => ({ id: r.memory_id, content: r.content })),
+    );
+    const byId = new Map(pool.map((r) => [r.memory_id, r]));
+    selected = topIds
+      .map((id) => byId.get(id))
+      .filter((r): r is (typeof pool)[number] => r != null);
+    // Blend: reranked memories first, then keyword/KNN top memories as
+    // context filler. The text model is greedy/lazy on marginal queries
+    // (often returns just the first candidate), so guarantee the synthesis
+    // always sees the strongest candidates regardless of ordering.
+    const seen = new Set(selected.map((r) => r.memory_id));
+    for (const r of rows) {
+      if (selected.length >= limit) break;
+      if (!seen.has(r.memory_id)) {
+        selected.push(r);
+        seen.add(r.memory_id);
+      }
+    }
+    // Fall back to the raw KNN order if the reranker returned nothing usable.
+    if (selected.length === 0) selected = rows.slice(0, limit);
+  } else {
+    selected = rows.slice(0, limit);
+  }
+
+  const citations: RecallCitation[] = selected.map((r) => ({
     memoryId: r.memory_id,
     personId: r.person_id,
     personName: r.person_name,
@@ -218,7 +276,7 @@ export async function recall(
 
   const answer = await synthesizeRecall(
     q,
-    rows.map((r) => ({
+    selected.map((r) => ({
       id: r.memory_id,
       personName: r.person_name,
       content: r.content,

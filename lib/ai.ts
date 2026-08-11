@@ -130,6 +130,20 @@ function safeParseJSON(raw: string): unknown {
   }
 }
 
+/** Like safeParseJSON but for a top-level JSON array (e.g. a ranked list). */
+function safeParseArray(raw: string): unknown {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenced?.[1] ?? raw;
+  const start = candidate.indexOf("[");
+  const end = candidate.lastIndexOf("]");
+  if (start === -1 || end === -1) return null;
+  try {
+    return JSON.parse(candidate.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
 const EXTRACT_SYSTEM = `You extract structured relationship memory from a user's note about a person they met or interacted with.
 Return ONLY a JSON object with this exact shape:
 {
@@ -162,6 +176,17 @@ export async function extractMemory(text: string): Promise<ExtractedMemory> {
     console.error("[ai] extractMemory failed, degrading:", errMsg(err));
     return degradedExtract(text);
   }
+}
+
+/**
+ * True when an embedding looks like a real model vector (Titan) rather than
+ * the deterministic hash fallback. The hash fallback collapses to very few
+ * distinct values (≈2); a real 1024-dim vector has hundreds.
+ */
+export function isRealEmbedding(v: number[]): boolean {
+  if (v.length < 64) return false;
+  const distinct = new Set(v.map((x) => x.toFixed(4)));
+  return distinct.size > 50;
 }
 
 export async function embed(text: string): Promise<number[]> {
@@ -204,6 +229,49 @@ const RECALL_SYSTEM = `You are the user's relationship memory. Answer the user's
 - Be concise and specific.
 - If the memories do not contain the answer, say "I don't have a memory of that yet." Do NOT guess or invent.
 - Refer to people by name. Do not mention memory IDs.`;
+
+const RERANK_SYSTEM = `You rank memories by relevance to a question.
+Return ONLY a JSON array of the indices (0-based) of the memories most relevant to the question, most relevant first, up to 5. Example: [2, 0, 4]
+Rules:
+- Use semantic meaning, not just keyword overlap (e.g. "recruiting backend devs" matches "hiring senior React engineers").
+- If nothing is relevant, return [].
+- Output JSON only, no prose.`;
+
+/**
+ * LLM reranker — the semantic fallback for recall.
+ *
+ * When real vector embeddings are unavailable (the deterministic hash
+ * fallback), pure KNN degenerates to keyword matching. The text model is
+ * cheap, works via the Bedrock API key alone, and understands meaning — so we
+ * use it to select the relevant memories from a broad candidate set. This is
+ * the same "hybrid retrieval" pattern production RAG systems use.
+ */
+export async function rerankRecall(
+  question: string,
+  memories: { id: string; content: string }[],
+): Promise<string[]> {
+  if (memories.length <= 3) return memories.map((m) => m.id);
+  if (isMockAI()) return memories.slice(0, 3).map((m) => m.id);
+  try {
+    const context = memories
+      .map((m, i) => `[${i}] ${m.content}`)
+      .join("\n");
+    const raw = await chatJSON(
+      RERANK_SYSTEM,
+      `Question: ${question}\n\nMemories:\n${context}`,
+    );
+    const parsed = safeParseJSON(raw) ?? safeParseArray(raw);
+    const indices = Array.isArray(parsed) ? parsed : null;
+    if (!indices) return memories.slice(0, 3).map((m) => m.id);
+    const ids = indices
+      .filter((i) => Number.isInteger(i) && i >= 0 && i < memories.length)
+      .map((i) => memories[i]!.id);
+    return ids.length > 0 ? ids : memories.slice(0, 3).map((m) => m.id);
+  } catch (err) {
+    console.error("[ai] rerankRecall failed, using top candidates:", errMsg(err));
+    return memories.slice(0, 3).map((m) => m.id);
+  }
+}
 
 export async function synthesizeRecall(
   question: string,
