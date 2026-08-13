@@ -67,10 +67,22 @@ answer is auditable and never fabricated.
 ### 2. Managed MCP Server — the ops agent
 
 The **CockroachDB Cloud Managed MCP Server** (`https://cockroachlabs.cloud/mcp`)
-connects a *second* AI agent (Claude Code, Cursor, VS Code) directly to the
-cluster — **read-only by default, fully audited, zero custom proxy**. This ops
-agent *inspects* the memory engine: querying the audit log, checking data
-health, surfacing insights about the user's network. It can never modify data.
+is a hosted service that connects a *second* AI agent (Claude Code, Cursor,
+GitHub Copilot, Cline, Codex) directly to your cluster — audited, zero custom
+proxy. It exposes read tools (`select_query`, `show_statement`, `list_tables`,
+`get_table_schema`) that let the agent inspect the memory engine: querying the
+audit log, checking data health, surfacing insights about the user's network.
+
+Connect in one command (`claude mcp add cockroachdb-cloud
+https://cockroachlabs.cloud/mcp --transport http`) and authenticate with your
+Cloud login (OAuth) or a service-account API key. See
+
+**Bonus — Recall's own MCP server, per user.** Every signed-in user can
+generate an API key in the app and connect their agent to *their own* memory at
+`/api/mcp` (read-only, auto-scoped by user). See
+**[docs/ops-agent.md](docs/ops-agent.md)**.
+**[docs/ops-agent.md](docs/ops-agent.md)** for the exact steps, per-tool configs,
+and example prompts.
 
 Two agents, one memory layer — that's the production-grade architecture the
 hackathon is asking for. See **[docs/ops-agent.md](docs/ops-agent.md)** for the

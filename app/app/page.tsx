@@ -6,18 +6,21 @@ import {
   listPeople,
   recentMemories,
 } from "@/lib/memory";
+import { listApiKeys } from "@/lib/api-keys";
 import { signOutAction } from "../actions";
 import { Composer } from "@/components/Composer";
 import { TodayCard } from "@/components/TodayCard";
+import { ApiKeysPanel } from "@/components/ApiKeysPanel";
 
 export default async function AppPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/");
 
-  const [today, people, recent] = await Promise.all([
+  const [today, people, recent, keys] = await Promise.all([
     getTodayFeed(user.id),
     listPeople(user.id),
     recentMemories(user.id, 8),
+    listApiKeys(user.id),
   ]);
 
   const firstName = user.name?.split(" ")[0] ?? "there";
@@ -127,6 +130,8 @@ export default async function AppPage() {
               </ul>
             )}
           </div>
+
+          <ApiKeysPanel keys={keys} />
         </aside>
       </div>
     </main>

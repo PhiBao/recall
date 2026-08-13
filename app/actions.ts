@@ -16,6 +16,7 @@ import {
 } from "@/lib/memory";
 import { userActionLimiter } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
+import { createApiKey, revokeApiKey } from "@/lib/api-keys";
 import type { RecallAnswer } from "@/lib/types";
 
 /**
@@ -105,6 +106,44 @@ export async function commitmentAction(
     return { ok: true };
   } catch (err) {
     log.error("commitment_status_failed", { userId, commitmentId, status, error: err instanceof Error ? err.message : String(err) });
+    return { ok: false };
+  }
+}
+
+const apiKeyNameSchema = z.string().min(1).max(60).optional();
+
+/** Generate a new API key. The raw key is returned once — show it to the user. */
+export async function generateApiKeyAction(
+  name?: string,
+): Promise<{ ok: true; rawKey: string; prefix: string } | { ok: false; error: string }> {
+  const userId = await requireUserId();
+  try {
+    if (!userActionLimiter.check(userId)) {
+      return { ok: false, error: "Slow down — you're doing too much right now." };
+    }
+    const parsed = apiKeyNameSchema.safeParse(name);
+    const label = parsed.success && parsed.data ? parsed.data : "default";
+    const key = await createApiKey(userId, label);
+    revalidatePath("/app");
+    return { ok: true, rawKey: key.rawKey, prefix: key.prefix };
+  } catch (err) {
+    log.error("api_key_generate_failed", { userId, error: err instanceof Error ? err.message : String(err) });
+    return { ok: false, error: "Could not create an API key." };
+  }
+}
+
+/** Revoke an API key. */
+export async function revokeApiKeyAction(
+  keyId: string,
+): Promise<{ ok: boolean }> {
+  const userId = await requireUserId();
+  try {
+    const id = z.string().uuid().parse(keyId);
+    await revokeApiKey(userId, id);
+    revalidatePath("/app");
+    return { ok: true };
+  } catch (err) {
+    log.error("api_key_revoke_failed", { userId, keyId, error: err instanceof Error ? err.message : String(err) });
     return { ok: false };
   }
 }

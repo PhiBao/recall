@@ -95,3 +95,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   INDEX audit_by_user (user_id, created_at DESC)
 );
+
+-- Per-user API keys: let a user's own agent query their memory via Recall's
+-- MCP server. We store only the SHA-256 hash of the key plus a short display
+-- prefix, so a leaked DB never exposes usable keys.
+CREATE TABLE IF NOT EXISTS api_key (
+  id          UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id     UUID        NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  name        STRING      NOT NULL DEFAULT 'default',  -- human label, e.g. "claude-code"
+  prefix      STRING      NOT NULL,                    -- e.g. "rec_u1234" (shown in UI)
+  key_hash    STRING      NOT NULL UNIQUE,             -- SHA-256 hex of the raw key
+  last_used_at TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at  TIMESTAMPTZ,
+  INDEX api_key_by_user (user_id)
+);

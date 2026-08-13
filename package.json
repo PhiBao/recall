@@ -17,7 +17,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "nudge:run": "tsx scripts/run-nudges.ts",
     "embed:verify": "tsx scripts/verify-embeddings.ts",
-    "db:seed-embeddings": "tsx scripts/reseed-embeddings.ts"
+    "db:seed-embeddings": "tsx scripts/reseed-embeddings.ts",
+    "mcp:verify": "tsx scripts/mcp-verify.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1103.0",
