@@ -12,6 +12,10 @@ export function ApiKeysPanel({ keys }: { keys: ApiKey[] }) {
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const mcpUrl =
+    typeof window !== "undefined" && window.location.hostname !== "localhost"
+      ? `${window.location.origin}/api/mcp`
+      : "https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp";
 
   function generate() {
     startTransition(async () => {
@@ -71,6 +75,21 @@ export function ApiKeysPanel({ keys }: { keys: ApiKey[] }) {
           >
             {copied ? "Copied ✓" : "Copy key"}
           </button>
+        </div>
+      )}
+
+      {newKey && (
+        <div className="mb-3 rounded-lg border border-ink/10 bg-white p-3">
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-ink/40">
+            Connect your agent (Claude Code)
+          </p>
+          <code className="block break-all rounded bg-paper px-2 py-1.5 font-mono text-[11px] leading-relaxed text-ink/70">
+            {`claude mcp add recall ${mcpUrl} --transport http --header "Authorization: Bearer ${newKey}"`}
+          </code>
+          <p className="mt-2 text-[11px] leading-relaxed text-ink/50">
+            Then ask: <i>&quot;which person is hiring React engineers?&quot;</i>{" "}
+            Full guide: <code className="font-mono">docs/ops-agent.md</code>
+          </p>
         </div>
       )}
 

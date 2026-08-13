@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getUserId } from "@/lib/auth";
-import { signInAction } from "./actions";
+import { SignInForm } from "@/components/SignInForm";
 
 export default async function Home({
   searchParams,
@@ -29,40 +29,7 @@ export default async function Home({
             the right moment.
           </p>
 
-          <form
-            action={signInAction}
-            className="mt-10 flex w-full max-w-md flex-col gap-3"
-          >
-            <input
-              type="text"
-              name="name"
-              placeholder="Your name (optional)"
-              className="w-full rounded-xl border border-paper/15 bg-ink-soft px-4 py-3 text-paper placeholder:text-paper/40 focus:border-accent focus:outline-none"
-              autoComplete="name"
-            />
-            <input
-              type="email"
-              name="email"
-              required
-              placeholder="you@example.com"
-              className="w-full rounded-xl border border-paper/15 bg-ink-soft px-4 py-3 text-paper placeholder:text-paper/40 focus:border-accent focus:outline-none"
-              autoComplete="email"
-            />
-            <button
-              type="submit"
-              className="w-full rounded-xl bg-accent px-4 py-3 font-semibold text-white transition hover:bg-accent/90"
-            >
-              Start remembering
-            </button>
-            {error === "invalid_email" && (
-              <p className="text-sm text-accent-soft">
-                Please enter a valid email address.
-              </p>
-            )}
-            <p className="mt-1 text-xs text-paper/40">
-              No password. We create your private memory space instantly.
-            </p>
-          </form>
+          <SignInForm error={error} />
         </div>
 
         <section className="grid gap-6 pb-20 sm:grid-cols-3">

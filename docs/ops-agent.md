@@ -1,44 +1,142 @@
-# Ops Agent — introspecting Recall's memory layer via MCP
+# Ops Agent — connecting your AI agent to Recall's memory
 
-Recall ships **two MCP surfaces**:
+Recall ships **two MCP surfaces**. Most people want **#1**:
 
-1. **CockroachDB Cloud Managed MCP Server** (`https://cockroachlabs.cloud/mcp`)
-   — a hosted service that lets any AI agent inspect the *cluster* directly
-   (see "Connect the Cloud MCP server" below). This is a required hackathon
-   tool.
-2. **Recall's own MCP server** (`/api/mcp`) — **every signed-in user can
-   generate an API key** in the app and connect their agent to *their own
-   memory*. See the next section.
+1. **Recall's own MCP server** (`/api/mcp`) — **you** sign in, generate a key,
+   and connect **your** agent (Claude Code, Cursor, VS Code…) to **your own
+   memory**. Scoped strictly to you.
+2. **CockroachDB Cloud Managed MCP Server** (`https://cockroachlabs.cloud/mcp`)
+   — lets any agent inspect the underlying *cluster* directly. A required
+   hackathon tool; see the second half of this doc.
 
-## Recall's own MCP server — per-user API keys
+---
 
-Each Recall user (signs in with email) can generate an API key in the
-**API keys · MCP access** panel of the app. That key lets their own agent read
-*their* memory through Recall's MCP server — scoped strictly to that user.
+# Part 1 — Connect your agent to Recall's MCP server
 
-1. Sign in → workspace → **API keys · MCP access** → **Generate API key**.
-2. Copy the key (shown once).
-3. Connect your agent, e.g. **Claude Code**:
+> What you need: **a signed-in Recall account** and **one API key** you generate
+> yourself. That's it — no AWS, no CockroachDB Cloud account, no other setup.
+
+## Step 1 — Generate your API key (in the app)
+
+1. Open the live app: **https://main.d1920llq7pdf9e.amplifyapp.com**
+2. Sign in with any email (a private memory space is created instantly).
+3. In the **API keys · MCP access** panel (right side of the workspace), click
+   **Generate API key**.
+4. **Copy the key now — it's shown only once.** It looks like
+   `recu_<random-letters-and-numbers>`.
+
+> If you have no memories yet, capture one first (type something like *"Met
+> Sarah Chen at the meetup — she's hiring React engineers"*) so your agent has
+> data to query.
+
+## Step 2 — Verify the key works (optional but recommended)
+
+```bash
+export RECALL_MCP_API_KEY="<your-recall-key>"
+pnpm exec tsx scripts/mcp-verify.ts
+```
+
+You should see the five tools (`list_tables`, `get_table_schema`,
+`select_query`, `list_people`, `search_memories`) and `connection verified ✔`.
+
+## Step 3 — Connect your agent
+
+Pick your tool. In every case the **server URL** is the same:
+
+```
+https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp
+```
+
+### Claude Code
 
 ```bash
 claude mcp add recall https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp \
   --transport http --header "Authorization: Bearer <your-key>"
 ```
 
-4. Ask it about your network: *"which person is hiring React engineers?"*,
-   *"who has the most memories?"*, *"show me the audit log."*
+Then in Claude Code run `/mcp` and confirm `recall` shows **connected** (green).
+Ask: *"which person is hiring React engineers?"*
 
-The endpoint exposes read-only tools: `list_tables`, `get_table_schema`,
-`select_query` (auto-scoped by user), `list_people`, `search_memories`.
-Only `SELECT` is allowed; every query is forced to filter by the key's
-`user_id`. Keys store only a SHA-256 hash — never the raw secret.
+### Cursor
 
-Quick self-check with a real key:
+Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "type": "http",
+      "url": "https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp",
+      "headers": { "Authorization": "Bearer <your-key>" }
+    }
+  }
+}
+```
+
+Restart Cursor, then check **Settings → MCP** — `recall` should be enabled and
+the tools listed.
+
+### VS Code / GitHub Copilot
+
+Add to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "recall": {
+      "type": "http",
+      "url": "https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp",
+      "headers": { "Authorization": "Bearer <your-key>" }
+    }
+  }
+}
+```
+
+### Cline
+
+Add to `cline_mcp_settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "type": "streamableHttp",
+      "url": "https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp",
+      "headers": { "Authorization": "Bearer <your-key>" }
+    }
+  }
+}
+```
+
+### Codex
 
 ```bash
-export COCKROACH_MCP_API_KEY="<your-key>"
-pnpm exec tsx scripts/mcp-verify.ts
+codex mcp add recall --url https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp \
+  --header "Authorization: Bearer <your-key>"
 ```
+
+## Step 4 — Ask your agent about your memory
+
+Once connected, try natural-language prompts (no SQL needed):
+
+- "Which person is hiring React engineers?"
+- "Who has the most memories?"
+- "What did I promise Marcus?"
+- "Show me my audit log"
+- "Who should I reconnect with?"
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `401 invalid_token` | Wrong/expired key, or the key was generated by a different account | Generate a new key in the app; copy it fully (starts `recu_`) |
+| Tool says "connection failed / server not found" | Missing `--transport http` or wrong URL | Use the exact URL + `--transport http` above |
+| `403` / tools don't appear | Key was revoked | Generate a new key |
+| Works locally but not from a hosted client | Key copied with a trailing space | Regenerate and paste cleanly |
+
+> The endpoint is **read-only**: only `SELECT` is allowed, and every query is
+> forced to filter by your `user_id`. Keys store only a SHA-256 hash — never the
+> raw secret. Revoke a key anytime in the app.
 
 ---
 
