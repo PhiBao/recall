@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { generateApiKeyAction, revokeApiKeyAction } from "@/app/actions";
 import type { ApiKey } from "@/lib/api-keys";
 
@@ -50,7 +51,10 @@ export function ApiKeysPanel({ keys }: { keys: ApiKey[] }) {
 
       <p className="mb-3 text-xs text-ink/50">
         Generate a key to let your own agent (Claude Code, Cursor, …) read your
-        memory through Recall&apos;s MCP server — scoped to you only.
+        memory through Recall&apos;s MCP server — scoped to you only.{" "}
+        <Link href="/guide" className="font-medium text-accent hover:underline">
+          How to connect →
+        </Link>
       </p>
 
       <button
@@ -88,7 +92,9 @@ export function ApiKeysPanel({ keys }: { keys: ApiKey[] }) {
           </code>
           <p className="mt-2 text-[11px] leading-relaxed text-ink/50">
             Then ask: <i>&quot;which person is hiring React engineers?&quot;</i>{" "}
-            Full guide: <code className="font-mono">docs/ops-agent.md</code>
+            <Link href="/guide" className="font-medium text-accent hover:underline">
+              Step-by-step guide →
+            </Link>
           </p>
         </div>
       )}
