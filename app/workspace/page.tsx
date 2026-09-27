@@ -67,7 +67,7 @@ export default async function AppPage() {
                   >
                     {m.person_name && (
                       <Link
-                        href={`/app/person/${m.person_id}`}
+                        href={`/workspace/person/${m.person_id}`}
                         className="font-medium text-accent hover:underline"
                       >
                         {m.person_name}
@@ -121,7 +121,7 @@ export default async function AppPage() {
                 {people.slice(0, 12).map((p) => (
                   <li key={p.id}>
                     <Link
-                      href={`/app/person/${p.id}`}
+                      href={`/workspace/person/${p.id}`}
                       className="flex items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-white"
                     >
                       <span className="font-medium">{p.name}</span>

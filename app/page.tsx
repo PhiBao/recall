@@ -8,7 +8,7 @@ export default async function Home({
   searchParams: Promise<{ error?: string }>;
 }) {
   // Already signed in? Go straight to the app.
-  if (await getUserId()) redirect("/app");
+  if (await getUserId()) redirect("/workspace");
   const { error } = await searchParams;
 
   return (

@@ -41,7 +41,7 @@ export async function signInAction(formData: FormData): Promise<void> {
     );
     await setSessionCookie(userId);
     log.info("sign_in", { userId });
-    redirect("/app");
+    redirect("/workspace");
 }
 
 export async function signOutAction(): Promise<void> {
@@ -66,7 +66,7 @@ export async function captureAction(
     const result = await captureMemory(userId, parsed.data, {
       defer: (task) => after(() => task),
     });
-    revalidatePath("/app");
+    revalidatePath("/workspace");
     log.info("capture", { userId, memoryId: result.memory.id, facts: result.factsAdded, commitments: result.commitmentsAdded });
     return { ok: true, summary: result.summary };
   } catch (err) {
@@ -122,7 +122,7 @@ export async function commitmentAction(
     const s = statusSchema.parse(status);
     const id = z.string().uuid().parse(commitmentId);
     await updateCommitmentStatus(userId, id, s);
-    revalidatePath("/app");
+    revalidatePath("/workspace");
     log.info("commitment_status", { userId, commitmentId: id, status: s });
     return { ok: true };
   } catch (err) {
@@ -145,7 +145,7 @@ export async function generateApiKeyAction(
     const parsed = apiKeyNameSchema.safeParse(name);
     const label = parsed.success && parsed.data ? parsed.data : "default";
     const key = await createApiKey(userId, label);
-    revalidatePath("/app");
+    revalidatePath("/workspace");
     return { ok: true, rawKey: key.rawKey, prefix: key.prefix };
   } catch (err) {
     log.error("api_key_generate_failed", { userId, error: err instanceof Error ? err.message : String(err) });
@@ -161,7 +161,7 @@ export async function revokeApiKeyAction(
   try {
     const id = z.string().uuid().parse(keyId);
     await revokeApiKey(userId, id);
-    revalidatePath("/app");
+    revalidatePath("/workspace");
     return { ok: true };
   } catch (err) {
     log.error("api_key_revoke_failed", { userId, keyId, error: err instanceof Error ? err.message : String(err) });

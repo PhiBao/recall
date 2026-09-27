@@ -199,7 +199,7 @@ function ThreadEntry({ entry }: { entry: Entry }) {
               >
                 {c.personName && c.personId ? (
                   <Link
-                    href={`/app/person/${c.personId}`}
+                    href={`/workspace/person/${c.personId}`}
                     className="font-medium text-accent hover:underline"
                   >
                     {c.personName}

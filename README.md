@@ -129,8 +129,8 @@ flowchart TB
 ```
 app/                     Next.js 15 App Router (React 19, server components)
   page.tsx               Landing + passwordless sign-in
-  app/page.tsx           Main workspace: Composer + Today feed + People
-  app/person/[id]/       Person profile: facts + memory timeline + blob links
+  workspace/page.tsx   Main workspace: Composer + Today feed + People
+  workspace/person/[id]/ Person profile: facts + memory timeline + blob links
   actions.ts             Server actions (only write path; auth-scoped)
 components/
   Composer.tsx           One box, auto-routed: Remember / Recall (cited ✓)

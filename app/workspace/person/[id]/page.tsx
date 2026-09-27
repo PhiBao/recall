@@ -29,7 +29,7 @@ export default async function PersonPage({
     <main className="min-h-screen bg-paper">
       <div className="mx-auto max-w-3xl px-6 py-8">
         <Link
-          href="/app"
+          href="/workspace"
           className="text-sm text-ink/50 transition hover:text-ink"
         >
           ← Back

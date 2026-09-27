@@ -161,7 +161,7 @@ export function ConnectGuide({
           ) : (
             <p className="mt-2 text-sm text-ink/70">
               You don&apos;t have a key yet. Go to{" "}
-              <Link href="/app" className="font-medium text-accent hover:underline">
+              <Link href="/workspace" className="font-medium text-accent hover:underline">
                 your workspace
               </Link>{" "}
               → <b>API keys · MCP access</b> → <b>Generate API key</b>, then
@@ -171,7 +171,7 @@ export function ConnectGuide({
 
           <div className="mt-4 flex flex-wrap gap-2">
             <Link
-              href="/app"
+              href="/workspace"
               className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-paper transition hover:bg-ink/90"
             >
               Open workspace → generate a key
