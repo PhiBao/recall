@@ -4,7 +4,6 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { userNamespace, isMemwalConfigured } from "@/lib/memwal";
 import {
-  __clearStoreCache,
   addCommitment,
   addMemory,
   createUser,
@@ -29,7 +28,7 @@ beforeEach(() => {
   } catch {
     /* ignore */
   }
-  __clearStoreCache();
+  // No in-memory cache: deleting the file fully resets state.
 });
 
 describe("projection store", () => {

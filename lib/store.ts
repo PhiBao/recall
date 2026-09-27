@@ -63,37 +63,32 @@ function dataPath(): string {
   return join(process.cwd(), "data", "recall.json");
 }
 
-// Cache keyed by path so tests (RECALL_DATA_PATH) and the app never share state.
-let cache: { path: string; data: StoreData } | null = null;
-
+// NOTE: no in-memory cache, by design. Next.js may bundle this module into
+// more than one route chunk (we observed duplicated module state in container
+// builds: one route wrote the user row while another kept reading an empty
+// snapshot). The file is the single source of truth — every load re-reads it,
+// so all readers converge regardless of bundling. Trade-off, documented:
+// concurrent read-modify-write cycles can clobber each other (last write
+// wins); fine for this scale, would need locking beyond it.
 export function loadStore(): StoreData {
   const path = dataPath();
-  if (cache && cache.path === path) return cache.data;
-  let data = emptyStore();
   try {
     if (existsSync(path)) {
       const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StoreData>;
-      data = { ...emptyStore(), ...parsed };
+      return { ...emptyStore(), ...parsed };
     }
   } catch {
-    data = emptyStore();
+    // Corrupt/unreadable file degrades to empty rather than crashing requests.
   }
-  cache = { path, data };
-  return data;
+  return emptyStore();
 }
 
-export function saveStore(): void {
+export function saveStore(data: StoreData): void {
   const path = dataPath();
-  const data = loadStore();
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
   writeFileSync(path, readFileSync(tmp, "utf8"), "utf8");
-}
-
-/** Test helper: drop the in-memory cache so the next load re-reads the file. */
-export function __clearStoreCache(): void {
-  cache = null;
 }
 
 function now(): string {
@@ -116,7 +111,7 @@ export function createUser(email: string, name?: string): AppUser {
     created_at: now(),
   };
   store.users.push(user);
-  saveStore();
+  saveStore(store);
   return user;
 }
 
@@ -142,7 +137,7 @@ export function upsertPerson(
     found.location = found.location ?? profile.location;
     found.last_interaction_at = now();
     found.updated_at = now();
-    saveStore();
+    saveStore(store);
     return { person: found, created: false };
   }
   const person: Person = {
@@ -157,7 +152,7 @@ export function upsertPerson(
     updated_at: now(),
   };
   store.people.push(person);
-  saveStore();
+  saveStore(store);
   return { person, created: true };
 }
 
@@ -199,15 +194,16 @@ export function addMemory(args: {
     created_at: now(),
   };
   store.memories.push(memory);
-  saveStore();
+  saveStore(store);
   return memory;
 }
 
 export function setMemoryBlob(memoryId: string, blobId: string): void {
-  const mem = loadStore().memories.find((m) => m.id === memoryId);
+  const store = loadStore();
+  const mem = store.memories.find((m) => m.id === memoryId);
   if (mem) {
     mem.walrus_blob_id = blobId;
-    saveStore();
+    saveStore(store);
   }
 }
 
@@ -279,7 +275,7 @@ export function addFact(args: {
     created_at: now(),
   };
   store.facts.push(fact);
-  saveStore();
+  saveStore(store);
   return fact;
 }
 
@@ -311,7 +307,7 @@ export function addCommitment(args: {
     updated_at: now(),
   };
   store.commitments.push(commitment);
-  saveStore();
+  saveStore(store);
   return commitment;
 }
 
@@ -346,7 +342,7 @@ export function updateCommitmentStatus(
     c.status = status;
   }
   c.updated_at = now();
-  saveStore();
+  saveStore(store);
 }
 
 /** People gone cold (no interaction in `staleDays`) without an open reconnect nudge. */
@@ -401,7 +397,7 @@ export function createApiKeyRecord(args: {
   // The hash is kept alongside the record (never the raw key).
   (key as unknown as Record<string, unknown>).key_hash = args.keyHash;
   store.apiKeys.push(key);
-  saveStore();
+  saveStore(store);
   return key;
 }
 
@@ -418,7 +414,7 @@ export function revokeApiKeyRecord(userId: string, keyId: string): void {
   );
   if (k) {
     k.revoked_at = now();
-    saveStore();
+    saveStore(store);
   }
 }
 
@@ -438,7 +434,7 @@ export function touchApiKey(id: string): void {
   if (k) {
     k.last_used_at = now();
     try {
-      saveStore();
+      saveStore(store);
     } catch {
       // Best-effort usage tracking; never fails auth.
     }
@@ -461,7 +457,7 @@ export function audit(
       detail: JSON.stringify(detail),
       created_at: now(),
     });
-    saveStore();
+    saveStore(store);
   } catch {
     // Audit must never break the write path.
   }

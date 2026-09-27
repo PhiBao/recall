@@ -67,7 +67,7 @@ async function main() {
         c.due_at = new Date(Date.now() - 2 * 86400_000).toISOString();
       }
     }
-    saveStore();
+    saveStore(s);
   }
 
   const blobs = loadStore().memories.filter(

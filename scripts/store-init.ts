@@ -12,8 +12,7 @@ loadEnv();
 import { loadStore, saveStore, storeCounts } from "../lib/store";
 
 async function main() {
-  loadStore();
-  saveStore();
+  saveStore(loadStore());
   const counts = storeCounts();
   console.log("[store:init] projection store ready ✔");
   console.log(
