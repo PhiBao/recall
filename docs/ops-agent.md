@@ -10,7 +10,7 @@ you, read-only.
 
 ## Step 1 — Generate your API key (in the app)
 
-1. Open the live app: **https://main.d1920llq7pdf9e.amplifyapp.com**
+1. Open the live app: **https://recall-walrus-memory.fly.dev**
 2. Sign in with any email (a private memory space is created instantly).
 3. In the **API keys · MCP access** panel (right side of the workspace), click
    **Generate API key**.
@@ -42,13 +42,13 @@ RECALL_MCP_QUERY="who is hiring react engineers" pnpm exec tsx scripts/mcp-verif
 Pick your tool. In every case the **server URL** is the same:
 
 ```
-https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp
+https://recall-walrus-memory.fly.dev/api/mcp
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add recall https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp \
+claude mcp add recall https://recall-walrus-memory.fly.dev/api/mcp \
   --transport http --header "Authorization: Bearer <your-key>"
 ```
 
@@ -64,7 +64,7 @@ Add to `.cursor/mcp.json`:
   "mcpServers": {
     "recall": {
       "type": "http",
-      "url": "https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp",
+      "url": "https://recall-walrus-memory.fly.dev/api/mcp",
       "headers": { "Authorization": "Bearer <your-key>" }
     }
   }
@@ -83,7 +83,7 @@ Add to `.vscode/mcp.json`:
   "servers": {
     "recall": {
       "type": "http",
-      "url": "https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp",
+      "url": "https://recall-walrus-memory.fly.dev/api/mcp",
       "headers": { "Authorization": "Bearer <your-key>" }
     }
   }
@@ -99,7 +99,7 @@ Add to `cline_mcp_settings.json`:
   "mcpServers": {
     "recall": {
       "type": "streamableHttp",
-      "url": "https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp",
+      "url": "https://recall-walrus-memory.fly.dev/api/mcp",
       "headers": { "Authorization": "Bearer <your-key>" }
     }
   }
@@ -109,7 +109,7 @@ Add to `cline_mcp_settings.json`:
 ### Codex
 
 ```bash
-codex mcp add recall --url https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp \
+codex mcp add recall --url https://recall-walrus-memory.fly.dev/api/mcp \
   --header "Authorization: Bearer <your-key>"
 ```
 

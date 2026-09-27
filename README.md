@@ -15,7 +15,9 @@ apps, and never gets invented. Walrus is that layer; everything else in this
 repo exists to serve it.
 
 > ### 🚀 Live demo
-> **https://main.d1920llq7pdf9e.amplifyapp.com** — deployed on AWS Amplify
+> **https://recall-walrus-memory.fly.dev** — deployed on Fly.io
+> (single 256MB machine + persistent volume), backed by Walrus Memory on
+> mainnet. Sign in with any email (or `demo@recall.app` for seeded
 > Hosting, backed by Walrus Memory on mainnet. Sign in with any email (or
 > `demo@recall.app` for seeded data). Health + blob proof:
 > `GET /api/health` → `counts.walrus_blobs`.
@@ -254,8 +256,8 @@ projection is future work (Walrus blobs are already Seal-encrypted).
   verdicts. Proof: `pnpm judge:verify`.
 - **Amazon Bedrock — Mantle endpoint** (Chat Completions via Voxtral Mini 3B,
   Mistral — *Beyond the Big Two* track): prose generation only.
-- **AWS Amplify Hosting**: deploys the Next.js app from the GitHub repo and
-  serves the live demo URL — see `docs/deploy-amplify.md`.
+- **Fly.io**: hosts the live demo URL (single shared-1x 256MB machine,
+  scale-to-zero, 1GB volume for the projection) — see `docs/deploy-fly.md`.
 - **AWS Lambda + EventBridge** *(optional)*: runs the daily nudge cron
   serverlessly (see `infra/nudge-lambda.ts`).
 
@@ -263,7 +265,7 @@ projection is future work (Walrus blobs are already Seal-encrypted).
 Next.js 15 · React 19 · TypeScript (strict) · Tailwind · Walrus Memory
 (portable encrypted memory + semantic recall · per-user namespaces · MCP
 server) · TypeSafe Jev (calibrated judgments: route, resolve, rank, verify) ·
-AWS Bedrock (Mantle + Voxtral Mini 3B, prose only) · AWS Lambda · AWS Amplify
+AWS Bedrock (Mantle + Voxtral Mini 3B, prose only) · AWS Lambda · Fly.io
 Hosting · `jose` · Zod.
 
 ## License

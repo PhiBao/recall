@@ -12,7 +12,7 @@ Full rules: `thewalrussessions.wal.app/chatbots`
 - [ ] **On mainnet, submitted on DeepSurge.**
 - [ ] **Working chatbot + Walrus Memory** (Recall, retrofitted — any use case
       eligible; relationship-memory for networkers).
-- [ ] **Deployed and reachable** — Amplify URL (see `docs/deploy-amplify.md`).
+- [ ] **Deployed and reachable** — Fly.io URL (see `docs/deploy-fly.md`).
 - [ ] **All memory on Walrus, mainnet. ≥10 blobs at submission.** Proof:
       agent ID + blob count in the DeepSurge form. Source of truth:
       `GET /api/health` → `counts.walrus_blobs`; `pnpm memwal:verify`.

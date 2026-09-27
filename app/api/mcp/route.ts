@@ -25,7 +25,7 @@ import {
  * Add to Claude Code:
  *   claude mcp add recall http://localhost:3000/api/mcp --transport http \
  *     --header "Authorization: Bearer <your-key>"
- * (in production: https://main.<app>.amplifyapp.com/api/mcp)
+ * (in production: https://recall-walrus-memory.fly.dev/api/mcp)
  *
  * Implements the streamable-HTTP subset: initialize, tools/list, tools/call.
  */

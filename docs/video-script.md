@@ -10,7 +10,7 @@ It doubles as the article's embedded demo.
 
 - [ ] Walrus Memory account funded on **mainnet**, `pnpm memwal:verify` → PASS.
 - [ ] Demo data seeded (`pnpm seed`) — every seed memory is a real Walrus blob.
-- [ ] App deployed on Amplify Hosting (or `pnpm dev` locally — but a live URL is
+- [ ] App deployed on Fly.io (or `pnpm dev` locally — but a live URL is
       stronger for "deployed and used by real people").
 - [ ] A Claude Code / Cursor window with Recall's MCP server connected
       (`/api/mcp`, see `docs/ops-agent.md`).
@@ -84,7 +84,7 @@ Show the architecture diagram (in the README / a slide).
 
 > "Bedrock extracts and answers, Walrus remembers — encrypted blobs with
 > per-user namespaces. Semantic recall with citations. Your agents read it over
-> MCP. Deployed on Amplify Hosting. That's Recall — a chatbot that actually
+> MCP. Deployed on Fly.io. That's Recall — a chatbot that actually
 > remembers."
 
 ## After recording
