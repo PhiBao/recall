@@ -1,20 +1,12 @@
 # Ops Agent — connecting your AI agent to Recall's memory
 
-Recall ships **two MCP surfaces**. Most people want **#1**:
-
-1. **Recall's own MCP server** (`/api/mcp`) — **you** sign in, generate a key,
-   and connect **your** agent (Claude Code, Cursor, VS Code…) to **your own
-   memory**. Scoped strictly to you.
-2. **CockroachDB Cloud Managed MCP Server** (`https://cockroachlabs.cloud/mcp`)
-   — lets any agent inspect the underlying *cluster* directly. A required
-   hackathon tool; see the second half of this doc.
-
----
-
-# Part 1 — Connect your agent to Recall's MCP server
+Recall ships **one MCP surface**: **Recall's own MCP server** (`/api/mcp`) —
+**you** sign in, generate a key, and connect **your** agent (Claude Code,
+Cursor, VS Code…) to **your own Walrus-backed memory**. Scoped strictly to
+you, read-only.
 
 > What you need: **a signed-in Recall account** and **one API key** you generate
-> yourself. That's it — no AWS, no CockroachDB Cloud account, no other setup.
+> yourself. That's it — no AWS, no database, no other setup.
 
 ## Step 1 — Generate your API key (in the app)
 
@@ -36,8 +28,14 @@ export RECALL_MCP_API_KEY="<your-recall-key>"
 pnpm exec tsx scripts/mcp-verify.ts
 ```
 
-You should see the five tools (`list_tables`, `get_table_schema`,
-`select_query`, `list_people`, `search_memories`) and `connection verified ✔`.
+You should see the six tools (`list_people`, `search_memories`, `ask_memory`,
+`get_person`, `get_today`, `recent_memories`) and `connection verified ✔`.
+
+To run a semantic search straight away:
+
+```bash
+RECALL_MCP_QUERY="who is hiring react engineers" pnpm exec tsx scripts/mcp-verify.ts
+```
 
 ## Step 3 — Connect your agent
 
@@ -120,10 +118,10 @@ codex mcp add recall --url https://main.d1920llq7pdf9e.amplifyapp.com/api/mcp \
 Once connected, try natural-language prompts (no SQL needed):
 
 - "Which person is hiring React engineers?"
-- "Who has the most memories?"
 - "What did I promise Marcus?"
-- "Show me my audit log"
 - "Who should I reconnect with?"
+- "Summarize what I know about Sarah Chen."
+- "What did I capture most recently?"
 
 ## Troubleshooting
 
@@ -134,152 +132,29 @@ Once connected, try natural-language prompts (no SQL needed):
 | `403` / tools don't appear | Key was revoked | Generate a new key |
 | Works locally but not from a hosted client | Key copied with a trailing space | Regenerate and paste cleanly |
 
-> The endpoint is **read-only**: only `SELECT` is allowed, and every query is
-> forced to filter by your `user_id`. Keys store only a SHA-256 hash — never the
-> raw secret. Revoke a key anytime in the app.
+> The endpoint is **read-only**: every tool is scoped to your `user_id` by the
+> key. Keys store only a SHA-256 hash — never the raw secret. Revoke a key
+> anytime in the app.
 
 ---
 
-## Connect the CockroachDB Cloud MCP server
+## Operating the memory layer (for the demo / judges)
 
-The **CockroachDB Cloud Managed MCP Server** lets an AI agent query the cluster
-directly. It's a hosted service at `https://cockroachlabs.cloud/mcp` — always
-available, nothing to deploy. You just connect your tool and authenticate.
+Durable memory lives in **Walrus Memory**, not in the app server:
 
-## Connect (option A) — OAuth with your Cloud login (recommended)
-
-Recommended: short-lived tokens, no long-lived secret.
-
-**Claude Code** (one command):
-
-```bash
-claude mcp add cockroachdb-cloud https://cockroachlabs.cloud/mcp --transport http
-```
-
-**Cursor**: CockroachDB Cloud Console → **Integrations** → **Connect MCP** →
-**Cursor** → **Add to Cursor**. Or add manually to `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "cockroachdb-cloud": { "url": "https://cockroachlabs.cloud/mcp" }
-  }
-}
-```
-
-**GitHub Copilot / VS Code**: Console → **Integrations** → **Connect MCP** →
-**GitHub Copilot** → **Add to GitHub Copilot**. Or `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "cockroachdb-cloud": { "type": "http", "url": "https://cockroachlabs.cloud/mcp" }
-  }
-}
-```
-
-Then **authenticate**: run `claude /mcp` (Claude Code) or open the MCP settings
-in your tool, select `cockroachdb-cloud`, choose **Authenticate**, log in to
-CockroachDB Cloud in the browser, pick your organization, and authorize
-read/write.
-
-## Connect (option B) — service-account API key
-
-1. CockroachDB Cloud Console → **Access management** → **Service accounts** →
-   **Create service account** → assign **Cluster Admin** or **Cluster Operator**
-   on the cluster. Copy the generated secret (shown once).
-2. Configure your tool with the key as a bearer token. **Claude Code**:
-
-```bash
-claude mcp add cockroachdb-cloud https://cockroachlabs.cloud/mcp --transport http \
-  --header "Authorization: Bearer <your-service-account-api-key>"
-```
-
-## Try it yourself — each user generates their own key
-
-The MCP server connects to the clusters **the authenticated user can access** —
-not to one fixed account. So **every person can test it against their own
-(possibly free) cluster**, with a key they generate themselves. No shared
-secrets, no access to our cluster required:
-
-1. **Create a free cluster** (if you don't have one):
-   https://cockroachlabs.cloud → **Create cluster** (Serverless free tier).
-2. **Create your own service account + API key**:
-   Console → **Access management** → **Service accounts** → **Create service
-   account** → assign a role on your cluster → copy the secret (shown once).
-3. **Verify the connection in 5 seconds**:
-
-   ```bash
-   export COCKROACH_MCP_API_KEY="<your-secret>"
-   pnpm exec tsx scripts/mcp-verify.ts
-   ```
-
-   → lists the MCP tools the endpoint exposes to your key. Or run a read-only
-   query straight away:
-
-   ```bash
-   COCKROACH_MCP_QUERY="select count(*) from <your_db>.memory" \
-     pnpm exec tsx scripts/mcp-verify.ts
-   ```
-4. **Wire it into your AI tool** (Claude Code / Cursor / VS Code) with the
-   snippets above, using your own key.
-
-> **Security note:** never commit or share a service-account secret. Each person
-> uses their own; revoke yours in the Console anytime.
-
-## (Optional) Scope to Recall's cluster
-
-By default a connection can reach every cluster you can access. To limit it to
-Recall's cluster, add the `mcp-cluster-id` header. Find the Cluster ID in the
-cluster's **Overview** page URL:
-`https://cockroachlabs.cloud/cluster/{cluster_id}/overview`.
-
-```json
-{
-  "mcpServers": {
-    "cockroachdb-cloud": {
-      "type": "http",
-      "url": "https://cockroachlabs.cloud/mcp",
-      "headers": { "mcp-cluster-id": "<your-cluster-id>" }
-    }
-  }
-}
-```
-
-(Our demo cluster host is `tribe-griffin-30783.j77.aws-ap-southeast-1.cockroachlabs.cloud`;
-the numeric Cluster ID is on its Overview page.)
-
-## What the ops agent can do
-
-The MCP server exposes read tools (`list_clusters`, `list_tables`,
-`get_table_schema`, `select_query`, `show_statement`, `explain_query`) and
-write tools. In our demo we use it **read-only**. Connect Claude Code and ask:
-
-- "List all tables in the recall database."
-- "Show me the schema of `memory` and `memory_embedding`."
-- "How many memories were captured in the last 7 days?"
-- "Show the audit log — what's the most common action?"
-- "Which person has the most memories?"
-- "How many open follow-ups are overdue?"
-
-Because the MCP server records activity in CockroachDB's own audit log and we
-only grant read permissions, this is safe to demo against the live cluster: the
-ops agent can observe the memory engine but never modify it.
-
-## Why this matters for judging
-
-- **Technical Implementation** (criterion #2): demonstrates the MCP Server
-  integration correctly and safely — HTTP transport, OAuth/API-key auth, real
-  queries against the live cluster.
-- **Production Readiness** (criterion #4): an agent that observes the system is
-  how you operate real infrastructure. The audit log becomes a first-class
-  feature, not an afterthought.
-- **Agentic Memory Design** (criterion #1): two distinct agents with different
-  capabilities, both grounded in the same memory layer.
+- **Dashboard:** connect the Sessions wallet at
+  [memory.walrus.xyz](https://memory.walrus.xyz) to browse namespaces
+  (`recall-<userId>`), blobs, and expiry.
+- **Health proof:** `GET /api/health` reports Walrus reachability plus
+  `counts.walrus_blobs` — the number of certified blobs this deployment owns.
+- **Round-trip proof:** `pnpm memwal:verify` writes a probe memory, waits for
+  certification, and recalls it back.
+- **Recovery proof:** the SDK's `restore(namespace)` rebuilds the relayer
+  index from Walrus blobs — memory survives even a total index loss.
 
 ## Demo it in the video
 
-A 30-second screen recording of Claude Code connected via MCP, running
-`select_query` / `show_statement` against the live cluster ("which person has
-the most memories?", "show the audit log") — that's the proof the MCP
+A 30-second screen recording of Claude Code connected via MCP, asking "which
+person has the most memories?" and "what did I promise Marcus?" — with the
+agent citing the exact Walrus-backed memories. That's the proof the memory
 integration is real and meaningful.

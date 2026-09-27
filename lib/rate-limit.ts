@@ -2,8 +2,8 @@
  * Minimal in-memory rate limiter (token bucket, per key).
  *
  * Scope: a single Node process. That's the right granularity for a demo and
- * for a single-instance App Runner deployment; a multi-instance deployment
- * would swap this for a Redis/CRDB-backed counter without changing the
+ * for a single-instance deployment; a multi-instance deployment
+ * would swap this for a shared-counter without changing the
  * interface. The point is to prove the integration point exists and behaves —
  * not to build a distributed limiter.
  */
@@ -37,7 +37,7 @@ export class RateLimiter {
 
 // Capture/recall are the user-facing write/read paths. Allow a generous but
 // bounded rate per user so a runaway client (or a misbehaving script) can't
-// exhaust Bedrock quota or spam the DB.
+// exhaust Bedrock quota or spam Walrus with blobs.
 export const userActionLimiter = new RateLimiter(
   30, // tokens
   60_000, // refill window = 1 minute → 30 req/min/user

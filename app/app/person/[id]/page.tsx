@@ -6,6 +6,7 @@ import {
   getPersonFacts,
   getPersonMemories,
 } from "@/lib/memory";
+import { BlobChip } from "@/components/BlobChip";
 
 export default async function PersonPage({
   params,
@@ -91,11 +92,12 @@ export default async function PersonPage({
                 key={m.id}
                 className="rounded-xl border border-ink/5 bg-white p-4"
               >
-                <div className="mb-1 flex items-center gap-2 text-xs text-ink/40">
+                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-ink/40">
                   <span className="rounded bg-ink/5 px-1.5 py-0.5 capitalize">
                     {m.kind}
                   </span>
                   <span>{new Date(m.occurred_at).toLocaleString()}</span>
+                  {m.walrus_blob_id && <BlobChip blobId={m.walrus_blob_id} />}
                 </div>
                 <p className="text-sm text-ink/80">{m.content}</p>
               </li>

@@ -13,53 +13,33 @@
 import { loadEnv } from "./load-env";
 loadEnv();
 
-import { query } from "../lib/db";
+import { addCommitment, audit, loadStore, stalePeople } from "../lib/store";
 
 const STALE_DAYS = 30;
 
 async function main() {
-  // Find (user, person) pairs that are stale and don't already have an open
-  // reconnect nudge. One statement, scoped per row's user_id.
-  const stale = await query<{
-    user_id: string;
-    person_id: string;
-    name: string;
-    last_interaction_at: string | null;
-  }>(
-    `SELECT p.user_id, p.id AS person_id, p.name, p.last_interaction_at
-       FROM person p
-      WHERE (p.last_interaction_at IS NULL
-             OR p.last_interaction_at < now() - ($1 || ' days')::interval)
-        AND NOT EXISTS (
-          SELECT 1 FROM commitment c
-           WHERE c.person_id = p.id
-             AND c.status = 'open'
-             AND c.description LIKE 'Reconnect with%'
-        )
-      LIMIT 500`,
-    [String(STALE_DAYS)],
-  );
-
-  if (stale.length === 0) {
-    console.log("[nudge] no stale relationships — nothing to do.");
-    process.exit(0);
-  }
-
+  const users = loadStore().users;
   let created = 0;
-  for (const row of stale) {
-    await query(
-      `INSERT INTO commitment (user_id, person_id, description, due_at, status)
-       VALUES ($1, $2, $3, now(), 'open')`,
-      [row.user_id, row.person_id, `Reconnect with ${row.name}`],
-    );
-    await query(
-      `INSERT INTO audit_log (user_id, action, detail) VALUES ($1, 'nudge_created', $2)`,
-      [row.user_id, JSON.stringify({ personId: row.person_id })],
-    );
-    created++;
+  for (const u of users) {
+    const stale = stalePeople(u.id, STALE_DAYS);
+    for (const row of stale) {
+      addCommitment({
+        userId: row.user_id,
+        personId: row.person_id,
+        description: `Reconnect with ${row.name}`,
+        dueAt: new Date().toISOString(),
+        sourceMemoryId: null,
+      });
+      audit(row.user_id, "nudge_created", { personId: row.person_id });
+      created++;
+    }
   }
 
-  console.log(`[nudge] created ${created} reconnect nudge(s).`);
+  if (created === 0) {
+    console.log("[nudge] no stale relationships — nothing to do.");
+  } else {
+    console.log(`[nudge] created ${created} reconnect nudge(s).`);
+  }
   process.exit(0);
 }
 

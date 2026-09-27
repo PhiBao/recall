@@ -1,8 +1,8 @@
 /**
  * Tiny structured logger.
  *
- * Emits one JSON line per event to stdout so a log collector (CloudWatch Logs,
- * the App Runner log stream) can index and query fields instead of parsing
+ * Emits one JSON line per event to stdout so a log collector (CloudWatch Logs)
+ * can index and query fields instead of parsing
  * prose. Every line shares `service`, `env`, and `timestamp` so filters are
  * consistent. Keep it dependency-free — this is the only logging primitive.
  */

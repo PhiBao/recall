@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import {
 import { userActionLimiter } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { createApiKey, revokeApiKey } from "@/lib/api-keys";
+import { INTENT_MIN_CONFIDENCE, isJudgeConfigured, routeIntent } from "@/lib/judge";
 import type { RecallAnswer } from "@/lib/types";
 
 /**
@@ -59,7 +61,11 @@ export async function captureAction(
     }
     const parsed = captureSchema.safeParse(rawText);
     if (!parsed.success) return { ok: false, error: "Please write a little more." };
-    const result = await captureMemory(userId, parsed.data);
+    // Fast capture: respond after the Walrus accept (~500ms); the blob
+    // certification backfills via after() without blocking the user.
+    const result = await captureMemory(userId, parsed.data, {
+      defer: (task) => after(() => task),
+    });
     revalidatePath("/app");
     log.info("capture", { userId, memoryId: result.memory.id, facts: result.factsAdded, commitments: result.commitmentsAdded });
     return { ok: true, summary: result.summary };
@@ -70,6 +76,21 @@ export async function captureAction(
 }
 
 const recallSchema = z.string().min(1).max(4000);
+
+export async function routeAction(
+  rawText: string,
+): Promise<{ ok: true; intent: "remember" | "recall"; confidence: number } | { ok: false }> {
+  try {
+    await requireUserId();
+    if (!isJudgeConfigured()) return { ok: false };
+    const text = recallSchema.parse(rawText);
+    const routed = await routeIntent(text);
+    if (!routed || routed.confidence < INTENT_MIN_CONFIDENCE) return { ok: false };
+    return { ok: true, intent: routed.intent, confidence: routed.confidence };
+  } catch {
+    return { ok: false };
+  }
+}
 
 export async function recallAction(
   question: string,

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "./env";
-import { query, queryOne } from "./db";
+import { createUser, findUserByEmail, getUser } from "./store";
 import type { AppUser } from "./types";
 
 /**
@@ -66,10 +66,7 @@ export async function getUserId(): Promise<string | null> {
 export async function getCurrentUser(): Promise<AppUser | null> {
   const userId = await getUserId();
   if (!userId) return null;
-  return await queryOne<AppUser>(
-    `SELECT id, email, name, created_at FROM app_user WHERE id = $1`,
-    [userId],
-  );
+  return getUser(userId);
 }
 
 /** Throws if not authenticated; used by server actions / API routes. */
@@ -85,17 +82,7 @@ export async function findOrCreateUser(
   name?: string,
 ): Promise<string> {
   const normalized = email.trim().toLowerCase();
-  const existing = await queryOne<{ id: string }>(
-    `SELECT id FROM app_user WHERE email = $1`,
-    [normalized],
-  );
+  const existing = findUserByEmail(normalized);
   if (existing) return existing.id;
-
-  const rows = await query<{ id: string }>(
-    `INSERT INTO app_user (email, name) VALUES ($1, $2) RETURNING id`,
-    [normalized, name?.trim() || null],
-  );
-  const id = rows[0]?.id;
-  if (!id) throw new Error("Failed to create user");
-  return id;
+  return createUser(normalized, name?.trim() || undefined).id;
 }

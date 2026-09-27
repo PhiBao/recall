@@ -1,24 +1,18 @@
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from "@aws-sdk/client-bedrock-runtime";
 import { z } from "zod";
-import { env, isMockAI, onAwsRuntime } from "./env";
+import { env, isMockAI } from "./env";
 import type { ExtractedMemory, MemoryKind } from "./types";
 
 /**
- * The AI layer. Three capabilities:
- *   1. extractMemory  — turn raw user text into a structured person + facts + commitments
- *   2. embed          — produce an embedding vector for semantic recall
- *   3. synthesizeRecall — answer a question grounded ONLY in retrieved memories
+ * The prose layer. Two capabilities, both through the Bedrock Mantle endpoint
+ * (OpenAI-compatible Chat Completions) with a single Bedrock API key:
+ *   1. extractMemory    — raw user text → structured person + facts + commitments
+ *   2. synthesizeRecall — grounded answer from retrieved memories ONLY
+ *   (+ rerankRecall — generative fallback ranker when Jev is unavailable)
  *
- * Chat uses the Bedrock Mantle endpoint (OpenAI-compatible Chat Completions),
- * authenticated with a single Bedrock API key — the simplest auth path.
- * Embeddings use Amazon Titan via the native bedrock-runtime API, which
- * requires IAM access keys; without them we fall back to a deterministic local
- * hash embedding (documented, never silently faked). If no Bedrock auth is
- * configured at all (or AI_PROVIDER=mock), everything uses the deterministic
- * local implementation so the product stays fully runnable for local dev.
+ * Jev (lib/judge.ts) owns every decision; this module only writes words.
+ * Embeddings live in Walrus Memory's relayer — there is no local vector
+ * code here. With no Bedrock auth (or AI_PROVIDER=mock), deterministic local
+ * implementations keep the product fully runnable for local dev.
  */
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -53,50 +47,6 @@ async function chatJSON(system: string, user: string): Promise<string> {
   }
   const json = await res.json();
   return (json?.choices?.[0]?.message?.content ?? "").trim();
-}
-
-// --- Bedrock: Titan embeddings (needs IAM credentials) --------------------
-
-let _client: BedrockRuntimeClient | null = null;
-function bedrock(): BedrockRuntimeClient {
-  if (!_client) {
-    const e = env();
-    // Explicit keys win; if they're absent (e.g. running on a compute role in
-    // the cloud), the SDK falls back to the default credential provider chain
-    // (instance/ECS role). RECALL_AWS_* avoids the reserved AWS_ prefix that
-    // hosting platforms like Amplify reject.
-    const accessKeyId = e.RECALL_AWS_ACCESS_KEY_ID ?? e.AWS_ACCESS_KEY_ID;
-    const secretAccessKey =
-      e.RECALL_AWS_SECRET_ACCESS_KEY ?? e.AWS_SECRET_ACCESS_KEY;
-    _client = new BedrockRuntimeClient({
-      region: e.AWS_REGION,
-      ...(accessKeyId && secretAccessKey
-        ? {
-            credentials: {
-              accessKeyId,
-              secretAccessKey,
-            },
-          }
-        : {}),
-    });
-  }
-  return _client;
-}
-
-// --- Bedrock: Titan embeddings --------------------------------------------
-
-async function titanEmbed(text: string): Promise<number[]> {
-  const e = env();
-  const cmd = new InvokeModelCommand({
-    modelId: e.BEDROCK_EMBED_MODEL_ID,
-    contentType: "application/json",
-    accept: "application/json",
-    body: JSON.stringify({ inputText: text, dimensions: e.EMBED_DIMENSIONS }),
-  });
-  const res = await bedrock().send(cmd);
-  const decoded = JSON.parse(new TextDecoder().decode(res.body));
-  const embedding: number[] = decoded?.embedding ?? [];
-  return embedding;
 }
 
 // --- Schemas for validating model output ----------------------------------
@@ -178,53 +128,6 @@ export async function extractMemory(text: string): Promise<ExtractedMemory> {
   }
 }
 
-/**
- * True when an embedding looks like a real model vector (Titan) rather than
- * the deterministic hash fallback. The hash fallback collapses to very few
- * distinct values (≈2); a real 1024-dim vector has hundreds.
- */
-export function isRealEmbedding(v: number[]): boolean {
-  if (v.length < 64) return false;
-  const distinct = new Set(v.map((x) => x.toFixed(4)));
-  return distinct.size > 50;
-}
-
-export async function embed(text: string): Promise<number[]> {
-  const e = env();
-  // Titan embeddings run on bedrock-runtime and need IAM credentials; a
-  // Bedrock API key alone cannot embed, so fall back to the deterministic
-  // local embedding in that case. On compute-role deployments the SDK resolves
-  // credentials from the role, so only skip when neither key form is set.
-  const hasExplicitKeys =
-    !!e.AWS_ACCESS_KEY_ID ||
-    !!e.AWS_SECRET_ACCESS_KEY ||
-    !!e.RECALL_AWS_ACCESS_KEY_ID ||
-    !!e.RECALL_AWS_SECRET_ACCESS_KEY;
-  if (isMockAI() || (!hasExplicitKeys && !onAwsRuntime())) {
-    return mockEmbed(text, e.EMBED_DIMENSIONS);
-  }
-  try {
-    const v = await titanEmbed(text);
-    if (v.length === e.EMBED_DIMENSIONS) return v;
-    console.error(
-      `[ai] embedding dim ${v.length} != ${e.EMBED_DIMENSIONS}, using mock`,
-    );
-    return mockEmbed(text, e.EMBED_DIMENSIONS);
-  } catch (err) {
-    // Bedrock-runtime (and so Titan embeddings) is often blocked by the AWS
-    // account while the Mantle chat endpoint remains available. Explain it so
-    // the fallback is never mistaken for a bug.
-    console.error(
-      "[ai] embed failed, degrading to local hash embedding:",
-      errMsg(err),
-      "| Real Titan embeddings need bedrock:InvokeModel on",
-      e.BEDROCK_EMBED_MODEL_ID,
-      "(enable it in Bedrock Model access + IAM)",
-    );
-    return mockEmbed(text, e.EMBED_DIMENSIONS);
-  }
-}
-
 const RECALL_SYSTEM = `You are the user's relationship memory. Answer the user's question using ONLY the provided memories.
 - Be concise and specific.
 - If the memories do not contain the answer, say "I don't have a memory of that yet." Do NOT guess or invent.
@@ -238,13 +141,12 @@ Rules:
 - Output JSON only, no prose.`;
 
 /**
- * LLM reranker — the semantic fallback for recall.
+ * Generative reranker — the fallback ranker when Jev is unavailable.
  *
- * When real vector embeddings are unavailable (the deterministic hash
- * fallback), pure KNN degenerates to keyword matching. The text model is
- * cheap, works via the Bedrock API key alone, and understands meaning — so we
- * use it to select the relevant memories from a broad candidate set. This is
- * the same "hybrid retrieval" pattern production RAG systems use.
+ * The text model understands meaning (paraphrases match), works via the
+ * Bedrock API key alone, and needs no vector index — the same "hybrid
+ * retrieval" pattern production RAG systems use. Jev's calibrated Noul
+ * ranking (lib/judge.ts) is preferred whenever configured.
  */
 export async function rerankRecall(
   question: string,
@@ -352,29 +254,6 @@ function mockExtract(text: string): ExtractedMemory {
 function degradedExtract(text: string): ExtractedMemory {
   const mock = mockExtract(text);
   return { ...mock, facts: mock.facts, commitments: mock.commitments };
-}
-
-/**
- * Deterministic pseudo-embedding: hashes tokens into a fixed-dim vector and
- * L2-normalizes. Good enough for local semantic-ish recall in the demo; the
- * real path uses Titan. Same text always yields the same vector.
- */
-function mockEmbed(text: string, dim: number): number[] {
-  const vec = new Array<number>(dim).fill(0);
-  const tokens = text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-  for (const tok of tokens) {
-    let h = 2166136261;
-    for (let i = 0; i < tok.length; i++) {
-      h ^= tok.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    const idx = Math.abs(h) % dim;
-    vec[idx] = (vec[idx] ?? 0) + 1;
-  }
-  let norm = 0;
-  for (const v of vec) norm += v * v;
-  norm = Math.sqrt(norm) || 1;
-  return vec.map((v) => v / norm);
 }
 
 function mockRecall(

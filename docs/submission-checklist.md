@@ -1,55 +1,62 @@
-# Hackathon submission checklist
+# Walrus Session 8 submission checklist — "Chatbots That Remember"
 
-Copy this into the Devpost submission. Everything here is implemented in the
-repo; items marked **[action]** need a one-time action before submitting.
+Session: Sep 18 → Oct 9, 2026 · $2,500 WAL · DeepSurge `c0141a4a-…`
+Full rules: `thewalrussessions.wal.app/chatbots`
 
-## Required
+## Eligibility (all required)
 
-- [x] **Public open-source repo** with a detectable license
-  - This repo, MIT license (`LICENSE`), visible in the GitHub About section.
-- [x] **Functional demo URL**
-  - Deployed on AWS Amplify Hosting (`docs/deploy-amplify.md`).
-  - **Live URL:** `https://main.d1920llq7pdf9e.amplifyapp.com` (verified
-    `/api/health` = 200, DB connected, vector index present).
-- [ ] **Video (< 3 min)** on YouTube or Vimeo, demonstrating the submission and
-      the CockroachDB memory layer at work.
-  - **[action]** Follow `docs/video-script.md`, record, upload, paste URL here:
-        `________________`
-- [x] **≥ 2 CockroachDB tools used — identified + explained how**
-  1. **Distributed Vector Indexing** — `memory_embedding` uses `VECTOR(1024)` +
-     `CREATE VECTOR INDEX`. Capture writes the embedding + relational facts in one
-     transaction (no drift); recall runs semantic KNN joined to people in one
-     query. Every answer cites its source memory.
-  2. **Managed MCP Server** — a second agent (Claude Code/Cursor) connects to the
-     cluster read-only via `https://cockroachlabs.cloud/mcp` to inspect the
-     memory layer: audit log, data health, network insights. It can never modify
-     data. (`docs/ops-agent.md`)
-- [x] **≥ 1 AWS service used — identified + explained how**
-  1. **Amazon Bedrock — Mantle endpoint**: chat (extraction + recall synthesis)
-     via Voxtral Mini, Bedrock API key auth.
-  2. **Amazon Bedrock — Titan Text Embeddings v2**: 1024-dim vectors for the
-     vector index, IAM auth.
-  3. **AWS Amplify Hosting**: deploys the live demo from the GitHub repo.
-  4. **AWS Lambda + EventBridge**: daily nudge cron, serverless.
-- [x] **Clear README** with setup/run instructions (`README.md`).
+- [ ] **Registered on DeepSurge**, application contains: project name, chatbot
+      description (what / who-for / problem), primary contact, GitHub account.
+- [ ] **Airtable submission form submitted once**:
+      `airtable.com/appoDAKpC74UOqoDa/shro5iVzzjoWfZlPK`
+- [ ] **On mainnet, submitted on DeepSurge.**
+- [ ] **Working chatbot + Walrus Memory** (Recall, retrofitted — any use case
+      eligible; relationship-memory for networkers).
+- [ ] **Deployed and reachable** — Amplify URL (see `docs/deploy-amplify.md`).
+- [ ] **All memory on Walrus, mainnet. ≥10 blobs at submission.** Proof:
+      agent ID + blob count in the DeepSurge form. Source of truth:
+      `GET /api/health` → `counts.walrus_blobs`; `pnpm memwal:verify`.
+- [ ] **Public GitHub repo + setup instructions** (this repo; README updated).
+- [ ] **LLM stated**: Mistral Voxtral Mini 3B via AWS Bedrock
+      (→ also qualifies for **Beyond the Big Two**).
+- [ ] **Dedicated Sessions wallet** created for the Session.
+      **[action]** Create it, fund with WAL+SUI, generate the MemWal account at
+      `memory.walrus.xyz`, put `MEMWAL_*` in `.env.local` + Amplify env.
+- [ ] **Article on Medium or Inkray**: what it does, Walrus Memory integration,
+      **before/after behavior**, evidence of real use (video/screenshots/logs).
+      **[action]** Follow `docs/video-script.md`, publish, link repo + live app.
+- [ ] **Feedback form completed** (≥1 bug + ≥1 improvement; file GitHub issues
+      on `MystenLabs/MemWal` first). Working draft: `docs/walrus-feedback.md`.
+- [ ] **Joined Walrus Discord**: `discord.com/invite/walrusprotocol`.
+- [ ] **Shared article on X** tagging `@WalrusProtocol` under the session
+      announcement with `#WalrusMemory`.
 
-## Optional (strengthens the entry)
+## Prize tracks (stackable — chase all marked ★)
 
-- [x] **Architecture diagram** — in `README.md`, shows two agents over one
-      memory layer + Bedrock + AWS.
-- [x] **Feedback on CockroachDB AI tools** — `docs/feedback-cockroachdb.md`.
-- [ ] **Real Titan embeddings verified** — `pnpm embed:verify` must PASS and
-      `pnpm db:seed-embeddings` re-seeded before the demo. See
-      `docs/embedding-fix.md`.
-      **[action]** Enable Titan model access in the Bedrock console, verify,
-      re-seed.
+- [ ] ★ **Best Chatbot** (500/250/150) — judged on all four criteria below.
+- [ ] ★ **Beyond the Big Two** (150×2) — primary LLM is Voxtral Mini
+      (Mistral via Bedrock), documented in README + submission form with
+      integration notes.
+- [ ] ★ **Best Article** (100×3) — clarity, honesty, usefulness to a Walrus
+      Memory newcomer.
+- [ ] ★ **Promo Prize** (100×5) — share the article in a third-party community
+      OUTSIDE Sui/Walrus (X / r/sui / r/walrus don't count). Link in form.
+- [ ] ★ **Bug Bounty** (100×5) — quality GitHub issues on `MystenLabs/MemWal`
+      during Sep 18–Oct 9 (repro steps, expected/actual, env).
 
-## Judges' criteria — how Recall maps
+## Judging criteria — how Recall maps
 
 | Criterion | Where it's addressed |
 |---|---|
-| **Agentic Memory Design** | Relational + vector memory in one transactional cluster; capture/recall are single-transaction, single-query; citations; hybrid KNN + join. MCP ops agent observes the same layer. |
-| **Technical Implementation** | Distributed Vector Indexing done right (transactional writes, vector index); MCP Server used safely (read-only, audited); strict per-user isolation; parameterized SQL; mock-AI fallback. |
-| **Real-World Impact** | Relationship memory for founders/sales/recruiters/investors — a frequent, emotionally charged pain that CRMs are too heavy for and note apps don't solve. |
-| **Production Readiness** | Rate limiting, structured logging, health endpoint, audit log, signed httpOnly sessions, Zod validation, fail-fast config, tests, deployed on AWS. |
-| **Creativity & Originality** | "Memory is a database problem" — no Postgres+Pinecone drift; two agents over one memory layer; proactive nudge agent via Lambda. |
+| **Does it actually remember?** | Capture in one sentence → Walrus blob; cross-session paraphrase recall ("hiring frontend people" → Sarah Chen) with citations; before/after video. |
+| **Real-world use** | Live Amplify URL + seeded demo user + real-user conversation logs in the article; Today feed proves memory changes behavior (follow-ups). |
+| **Build quality** | One-command local run (no DB), `pnpm store:init && pnpm seed && pnpm dev`; `pnpm memwal:verify` + `pnpm judge:verify` round-trip proofs; tests (32 passing); per-user namespaces; graceful offline fallback. |
+| **Best article** | Before/after narrative, integration code (`lib/memwal.ts`, `lib/memory.ts`), blob proof, "clone and run" instructions. |
+
+## Operational proof commands (for the article + form)
+
+```bash
+pnpm memwal:verify   # relayer health → probe blob → semantic recall round-trip
+pnpm seed             # 6 real Walrus blobs (counts toward the ≥10)
+curl /api/health     # counts.walrus_blobs + walrus.reachable
+```

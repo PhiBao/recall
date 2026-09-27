@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition } from "react";
 import Link from "next/link";
-import { captureAction, recallAction } from "@/app/actions";
+import { captureAction, recallAction, routeAction } from "@/app/actions";
 import type { RecallAnswer } from "@/lib/types";
 
 type Mode = "capture" | "recall";
@@ -22,11 +22,20 @@ interface Entry {
  */
 export function Composer({ hasPeople }: { hasPeople: boolean }) {
   const [mode, setMode] = useState<Mode>("capture");
+  // Until the user touches the toggle, Jev routes each submit automatically.
+  const [touched, setTouched] = useState(false);
+  const [autoRouted, setAutoRouted] = useState(false);
   const [value, setValue] = useState("");
   const [thread, setThread] = useState<Entry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  function pickMode(m: Mode) {
+    setMode(m);
+    setTouched(true);
+    setAutoRouted(false);
+  }
 
   function submit() {
     const text = value.trim();
@@ -37,7 +46,18 @@ export function Composer({ hasPeople }: { hasPeople: boolean }) {
     setValue("");
 
     startTransition(async () => {
-      if (mode === "capture") {
+      let effective = mode;
+      let wasAuto = false;
+      if (!touched) {
+        const routed = await routeAction(text);
+        if (routed.ok) {
+          effective = routed.intent === "remember" ? "capture" : "recall";
+          setMode(effective);
+          wasAuto = true;
+        }
+      }
+      setAutoRouted(wasAuto);
+      if (effective === "capture") {
         const res = await captureAction(text);
         if (res.ok) {
           setThread((t) => [
@@ -84,19 +104,29 @@ export function Composer({ hasPeople }: { hasPeople: boolean }) {
   return (
     <div className="rounded-2xl border border-ink/10 bg-white p-4 shadow-sm">
       {/* Mode toggle */}
-      <div className="mb-3 inline-flex rounded-lg bg-ink/5 p-1 text-sm">
-        <button
-          onClick={() => setMode("capture")}
-          className={tabClass(mode === "capture")}
-        >
-          Remember
-        </button>
-        <button
-          onClick={() => setMode("recall")}
-          className={tabClass(mode === "recall")}
-        >
-          Recall
-        </button>
+      <div className="mb-3 inline-flex items-center gap-2">
+        <div className="inline-flex rounded-lg bg-ink/5 p-1 text-sm">
+          <button
+            onClick={() => pickMode("capture")}
+            className={tabClass(mode === "capture")}
+          >
+            Remember
+          </button>
+          <button
+            onClick={() => pickMode("recall")}
+            className={tabClass(mode === "recall")}
+          >
+            Recall
+          </button>
+        </div>
+        {autoRouted && (
+          <span
+            className="rounded-md bg-accent/10 px-2 py-1 text-[11px] font-medium text-accent"
+            title="Jev classified this message and routed it automatically. Tap a tab to override."
+          >
+            auto-routed
+          </span>
+        )}
       </div>
 
       {/* Thread */}
@@ -181,6 +211,17 @@ function ThreadEntry({ entry }: { entry: Entry }) {
                 </span>
                 <span className="ml-1 text-ink/30">
                   ({new Date(c.occurredAt).toLocaleDateString()})
+                </span>
+                <span
+                  className="ml-1 font-mono text-ink/30"
+                  title={
+                    c.verified === "verified"
+                      ? `Relevance ${c.score} — Jev verified this memory supports the answer (confidence ${(c.checkConfidence ?? 0).toFixed(2)})`
+                      : `Relevance ${c.score}`
+                  }
+                >
+                  {c.score.toFixed(2)}
+                  {c.verified === "verified" ? " ✓" : ""}
                 </span>
               </div>
             ))}

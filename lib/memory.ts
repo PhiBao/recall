@@ -1,8 +1,30 @@
-import { query, queryOne, withTransaction, toVectorLiteral } from "./db";
+import {
+  addCommitment,
+  addFact,
+  addMemory,
+  audit,
+  getPersonFacts as storeGetPersonFacts,
+  getPerson as storeGetPerson,
+  listPeople as storeListPeople,
+  recentMemories as storeRecentMemories,
+  searchMemories,
+  setMemoryBlob,
+  todayCommitments,
+  updateCommitmentStatus as storeUpdateCommitmentStatus,
+  upsertPerson,
+} from "./store";
+import { userNamespace, walrusAwaitBlob, walrusRecall, walrusRememberAsync } from "./memwal";
+import {
+  CITATION_AUTO_ACCEPT,
+  RELEVANCE_MIN_SCORE,
+  findPersonSpans,
+  isJudgeConfigured,
+  resolvePersonName,
+  scoreRelevance,
+  verifyCitations,
+} from "./judge";
 import {
   extractMemory,
-  embed,
-  isRealEmbedding,
   rerankRecall,
   synthesizeRecall,
 } from "./ai";
@@ -20,6 +42,11 @@ import type {
  * Memory domain service — the product logic that turns raw user text into
  * durable, queryable memory and answers questions from it.
  *
+ * Durability lives in Walrus Memory (encrypted blobs on Walrus, semantic
+ * search via the relayer, isolated per user with namespace
+ * `recall-<userId>`). Structure lives in the local projection (lib/store.ts):
+ * people, facts, commitments — the things the UI sorts, filters, and joins.
+ *
  * Everything here is scoped by userId. Callers MUST pass the authenticated
  * user's id; there is no cross-user access path.
  */
@@ -34,126 +61,171 @@ export interface CaptureResult {
   summary: string;
 }
 
+/** The text actually persisted to Walrus: raw memory + its structured reading. */
+function buildWalrusText(
+  rawText: string,
+  extracted: Awaited<ReturnType<typeof extractMemory>>,
+): string {
+  const lines: string[] = [];
+  if (extracted.personName) {
+    const who = [extracted.personName, extracted.headline ?? extracted.company]
+      .filter(Boolean)
+      .join(" — ");
+    lines.push(`About: ${who} (${extracted.kind})`);
+  } else {
+    lines.push(`Note (${extracted.kind})`);
+  }
+  lines.push(rawText);
+  if (extracted.facts.length > 0) {
+    lines.push(
+      `Facts: ${extracted.facts.map((f) => `${f.attribute}=${f.value}`).join("; ")}`,
+    );
+  }
+  if (extracted.commitments.length > 0) {
+    lines.push(
+      `Follow-ups: ${extracted.commitments
+        .map(
+          (c) =>
+            `${c.description}${c.dueInDays === null ? "" : ` (due in ~${c.dueInDays}d)`}`,
+        )
+        .join("; ")}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 /**
  * Capture a memory from raw user text:
- *  1. extract structured data (Bedrock)
- *  2. resolve/create the person
- *  3. store raw memory + embedding + facts + commitments — in ONE transaction
+ *  1. extract structured data (Bedrock prose)
+ *  2. resolve the person (Jev verbatim selection, Bedrock fallback)
+ *  3. submit the enriched memory to Walrus (accepted in ~500ms)
+ *  4. store the projection rows (person link, facts, commitments)
+ *  5. certify the blob — awaited inline by default; pass `defer` (e.g. Next's
+ *     after()) to respond fast and backfill the blob id in the background.
  *
- * The raw memory is always saved even if extraction is thin, so we never lose
- * what the user told us.
+ * The raw memory is always saved locally even if Walrus is unreachable, so we
+ * never lose what the user told us.
  */
 export async function captureMemory(
   userId: string,
   rawText: string,
+  opts?: { defer?: (task: Promise<void>) => void },
 ): Promise<CaptureResult> {
   const text = rawText.trim().slice(0, MAX_INPUT_CHARS);
   if (!text) throw new Error("Empty memory");
 
   const extracted = await extractMemory(text);
-  const embedding = await embed(text);
-  const vectorLiteral = toVectorLiteral(embedding);
 
-  return await withTransaction(async (client) => {
-    // 1. Resolve or create the person (if one was identified).
-    let person: Person | null = null;
-    if (extracted.personName) {
-      const found = await client.query<Person>(
-        `SELECT * FROM person WHERE user_id = $1 AND lower(name) = lower($2) LIMIT 1`,
-        [userId, extracted.personName],
-      );
-      if (found.rows[0]) {
-        person = found.rows[0];
-        // Enrich sparse fields without overwriting existing values.
-        await client.query(
-          `UPDATE person
-             SET headline = COALESCE(headline, $2),
-                 company  = COALESCE(company, $3),
-                 location = COALESCE(location, $4),
-                 last_interaction_at = now(),
-                 updated_at = now()
-           WHERE id = $1`,
-          [person.id, extracted.headline, extracted.company, extracted.location],
-        );
-      } else {
-        const created = await client.query<Person>(
-          `INSERT INTO person (user_id, name, headline, company, location, last_interaction_at)
-           VALUES ($1, $2, $3, $4, $5, now())
-           RETURNING *`,
-          [
-            userId,
-            extracted.personName,
-            extracted.headline,
-            extracted.company,
-            extracted.location,
-          ],
-        );
-        person = created.rows[0] ?? null;
-      }
+  // 1. Resolve the person: Bedrock proposes structure, Jev disposes identity.
+  //    Candidates are pre-parsed by code (roster + detected spans), so the
+  //    answer is always a verbatim span — Jev cannot invent a name, and it
+  //    will not pick someone merely mentioned for an intro (the Ravi/David
+  //    class of mistake). Falls back to Bedrock's proposal when Jev is
+  //    unconfigured, fails, or answers "none" with low confidence.
+  let resolvedName = extracted.personName;
+  let personSource = "bedrock";
+  if (isJudgeConfigured()) {
+    const roster = storeListPeople(userId).map((p) => p.name);
+    const picked = await resolvePersonName(text, [
+      ...roster,
+      ...findPersonSpans(text),
+      ...(extracted.personName ? [extracted.personName] : []),
+    ]);
+    if (picked?.name) {
+      resolvedName = picked.name;
+      personSource = "jev";
+    } else if (picked && picked.confidence >= 0.7) {
+      resolvedName = null;
+      personSource = "jev";
     }
+  }
+  extracted.personName = resolvedName;
 
-    // 2. Store the raw memory (source of truth).
-    const memRows = await client.query<Memory>(
-      `INSERT INTO memory (user_id, person_id, kind, content)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [userId, person?.id ?? null, extracted.kind, text],
-    );
-    const memory = memRows.rows[0];
-    if (!memory) throw new Error("Failed to store memory");
+  let person: Person | null = null;
+  if (resolvedName) {
+    person = upsertPerson(userId, {
+      name: resolvedName,
+      headline: extracted.headline,
+      company: extracted.company,
+      location: extracted.location,
+    }).person;
+  }
 
-    // 3. Store the embedding (semantic recall) — same transaction = no drift.
-    await client.query(
-      `INSERT INTO memory_embedding (memory_id, user_id, embedding)
-       VALUES ($1, $2, $3::vector)`,
-      [memory.id, userId, vectorLiteral],
-    );
+  // 2. Submit to Walrus (fast accept), then store the raw memory immediately
+  // so the user never waits on certification.
+  const { jobId } = await walrusRememberAsync(userId, buildWalrusText(text, extracted));
 
-    // 4. Store derived facts (each cites this memory).
-    let factsAdded = 0;
-    if (person) {
-      for (const f of extracted.facts) {
-        await client.query(
-          `INSERT INTO fact (user_id, person_id, attribute, value, source_memory_id)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [userId, person.id, f.attribute, f.value, memory.id],
-        );
-        factsAdded++;
-      }
-    }
-
-    // 5. Store commitments / follow-ups (drive the Today feed).
-    let commitmentsAdded = 0;
-    for (const c of extracted.commitments) {
-      const dueClause =
-        c.dueInDays === null
-          ? null
-          : new Date(Date.now() + c.dueInDays * 86400_000).toISOString();
-      await client.query(
-        `INSERT INTO commitment (user_id, person_id, description, due_at, source_memory_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [userId, person?.id ?? null, c.description, dueClause, memory.id],
-      );
-      commitmentsAdded++;
-    }
-
-    await client.query(
-      `INSERT INTO audit_log (user_id, action, detail)
-       VALUES ($1, 'capture_memory', $2)`,
-      [
-        userId,
-        JSON.stringify({
-          memoryId: memory.id,
-          personId: person?.id ?? null,
-          factsAdded,
-          commitmentsAdded,
-        }),
-      ],
-    );
-
-    const summary = buildCaptureSummary(person, factsAdded, commitmentsAdded);
-    return { memory, person, factsAdded, commitmentsAdded, summary };
+  // 3. Store the raw memory (source of truth for the UI).
+  const memory = addMemory({
+    userId,
+    personId: person?.id ?? null,
+    kind: extracted.kind,
+    content: text,
+    blobId: null,
   });
+
+  // Backfill the blob id once certified. Inline by default (scripts); in a
+  // request handler pass defer: after() so capture responds in seconds.
+  const backfill: Promise<void> = (async () => {
+    if (!jobId) return;
+    try {
+      const { blobId } = await walrusAwaitBlob(jobId);
+      if (blobId) {
+        setMemoryBlob(memory.id, blobId);
+        audit(userId, "capture_certified", { memoryId: memory.id, walrusBlobId: blobId });
+      }
+    } catch {
+      // Best effort: the blob still exists on Walrus under the namespace.
+    }
+  })();
+  // Keep the non-deferred path behavior: scripts await certification.
+  if (opts?.defer) opts.defer(backfill);
+  else await backfill;
+
+  // 4. Store derived facts (each cites this memory).
+  let factsAdded = 0;
+  if (person) {
+    for (const f of extracted.facts) {
+      addFact({
+        userId,
+        personId: person.id,
+        attribute: f.attribute,
+        value: f.value,
+        sourceMemoryId: memory.id,
+      });
+      factsAdded++;
+    }
+  }
+
+  // 5. Store commitments / follow-ups (drive the Today feed).
+  let commitmentsAdded = 0;
+  for (const c of extracted.commitments) {
+    const dueAt =
+      c.dueInDays === null
+        ? null
+        : new Date(Date.now() + c.dueInDays * 86400_000).toISOString();
+    addCommitment({
+      userId,
+      personId: person?.id ?? null,
+      description: c.description,
+      dueAt,
+      sourceMemoryId: memory.id,
+    });
+    commitmentsAdded++;
+  }
+
+  audit(userId, "capture_memory", {
+    memoryId: memory.id,
+    personId: person?.id ?? null,
+    factsAdded,
+    commitmentsAdded,
+    walrusJobId: jobId,
+    walrusNamespace: userNamespace(userId),
+    personSource,
+  });
+
+  const summary = buildCaptureSummary(person, factsAdded, commitmentsAdded);
+  return { memory, person, factsAdded, commitmentsAdded, summary };
 }
 
 function buildCaptureSummary(
@@ -172,9 +244,13 @@ function buildCaptureSummary(
 }
 
 /**
- * Hybrid recall: semantic KNN over embeddings + relational join to people,
- * scoped to the user. Returns a synthesized answer plus citations to the
- * exact memories that support it (trustworthy, never invented).
+ * Recall: Walrus semantic shortlist → Jev calibrated ranking → Bedrock
+ * synthesis → Jev citation verification.
+ *
+ * Fast search (Walrus) finds candidates; a Noul per pair ranks them with
+ * calibrated probabilities; low-relevance pools abstain WITHOUT spending a
+ * synthesis call; every shown citation carries a machine-checked verdict.
+ * When Jev is unconfigured, the legacy Bedrock-rerank path applies.
  */
 export async function recall(
   userId: string,
@@ -184,105 +260,173 @@ export async function recall(
   const q = question.trim().slice(0, MAX_INPUT_CHARS);
   if (!q) return { answer: "Ask me anything about the people you've met.", citations: [] };
 
-  const embedding = await embed(q);
-  const vectorLiteral = toVectorLiteral(embedding);
-  const realEmbedding = isRealEmbedding(embedding);
-
-  // The core query: vector similarity (<-> = L2 distance) + relational join,
-  // all in one CockroachDB statement, all scoped by user_id. Pull a wider
-  // candidate pool (×2 limit) so the reranker has something to work with.
-  const rows = await query<{
-    memory_id: string;
-    person_id: string | null;
-    person_name: string | null;
+  interface Cand {
+    id: string;
+    personId: string | null;
+    personName: string | null;
     content: string;
-    occurred_at: string;
-    distance: number;
-  }>(
-    `SELECT m.id AS memory_id,
-            m.person_id,
-            p.name AS person_name,
-            m.content,
-            m.occurred_at,
-            (me.embedding <-> $2::vector) AS distance
-       FROM memory_embedding me
-       JOIN memory m ON m.id = me.memory_id
-       LEFT JOIN person p ON p.id = m.person_id
-      WHERE me.user_id = $1
-      ORDER BY me.embedding <-> $2::vector
-      LIMIT $3`,
-    [userId, vectorLiteral, limit * 3],
-  );
-
-  // If the embeddings are the deterministic hash fallback (keyword matching),
-  // the KNN ordering is meaningless — the model should judge candidates on
-  // content alone. Fetch the user's most recent memories as a neutral pool,
-  // then rerank with the text model so paraphrases ("recruiting backend devs")
-  // still surface the right memory ("hiring senior React engineers"). Real
-  // vector embeddings keep the exact KNN path.
-  let selected = rows;
-  if (!realEmbedding) {
-    const pool = await query<
-      (typeof rows)[number]
-    >(
-      `SELECT m.id AS memory_id,
-              m.person_id,
-              p.name AS person_name,
-              m.content,
-              m.occurred_at,
-              0 AS distance
-         FROM memory m
-         LEFT JOIN person p ON p.id = m.person_id
-        WHERE m.user_id = $1
-        ORDER BY m.occurred_at DESC
-        LIMIT $2`,
-      [userId, Math.max(limit * 3, 12)],
-    );
-    const topIds = await rerankRecall(
-      q,
-      pool.map((r) => ({ id: r.memory_id, content: r.content })),
-    );
-    const byId = new Map(pool.map((r) => [r.memory_id, r]));
-    selected = topIds
-      .map((id) => byId.get(id))
-      .filter((r): r is (typeof pool)[number] => r != null);
-    // Blend: reranked memories first, then keyword/KNN top memories as
-    // context filler. The text model is greedy/lazy on marginal queries
-    // (often returns just the first candidate), so guarantee the synthesis
-    // always sees the strongest candidates regardless of ordering.
-    const seen = new Set(selected.map((r) => r.memory_id));
-    for (const r of rows) {
-      if (selected.length >= limit) break;
-      if (!seen.has(r.memory_id)) {
-        selected.push(r);
-        seen.add(r.memory_id);
-      }
-    }
-    // Fall back to the raw KNN order if the reranker returned nothing usable.
-    if (selected.length === 0) selected = rows.slice(0, limit);
-  } else {
-    selected = rows.slice(0, limit);
+    occurredAt: string;
+    baseScore: number;
+    /** False for Walrus hits with no local projection row (orphans). */
+    matched?: boolean;
   }
 
-  const citations: RecallCitation[] = selected.map((r) => ({
-    memoryId: r.memory_id,
-    personId: r.person_id,
-    personName: r.person_name,
-    snippet: r.content.slice(0, 240),
-    occurredAt: r.occurred_at,
-    // Convert distance to a friendly 0..1 relevance score.
-    score: Number((1 / (1 + Number(r.distance))).toFixed(3)),
-  }));
-
-  const answer = await synthesizeRecall(
-    q,
-    selected.map((r) => ({
-      id: r.memory_id,
+  // 1. Candidate pool: Walrus semantic shortlist, else local recency pool.
+  let pool: Cand[] = [];
+  let fromWalrus = false;
+  const hits = await walrusRecall(userId, q, limit);
+  if (hits.length > 0) {
+    fromWalrus = true;
+    const byBlob = new Map(
+      storeRecentMemories(userId, 500)
+        .filter((m) => m.walrus_blob_id)
+        .map((m) => [m.walrus_blob_id as string, m]),
+    );
+    const peopleById = new Map(storeListPeople(userId).map((p) => [p.id, p.name]));
+    pool = hits.slice(0, limit).map((h) => {
+      const local = h.blobId ? byBlob.get(h.blobId) : undefined;
+      const personId = local?.person_id ?? null;
+      const content = local?.content ?? h.text;
+      return {
+        id: local?.id ?? h.blobId ?? h.text.slice(0, 32),
+        personId,
+        personName: personId ? (peopleById.get(personId) ?? null) : null,
+        content,
+        occurredAt: local?.occurred_at ?? new Date().toISOString(),
+        baseScore: Number((1 / (1 + h.distance)).toFixed(3)),
+        matched: !!local,
+      };
+    });
+    // Hygiene: blobs with no local projection row are orphans (e.g. a write
+    // interrupted before bookkeeping). Drop them when matched memories exist
+    // so they can't displace real citations; keep them only as a last resort
+    // (empty projection after a redeploy — Walrus still remembers).
+    const matched = pool.filter((p) => p.matched);
+    if (matched.length > 0) pool = matched;
+  } else {
+    const recent = storeRecentMemories(userId, 12);
+    if (recent.length === 0) {
+      return { answer: "I don't have a memory of that yet.", citations: [] };
+    }
+    pool = recent.map((r) => ({
+      id: r.id,
+      personId: r.person_id,
       personName: r.person_name,
       content: r.content,
       occurredAt: r.occurred_at,
+      baseScore: 0,
+    }));
+  }
+
+  // 2. Rank with calibrated judgments when available.
+  let ranked = pool;
+  let judged = false;
+  if (isJudgeConfigured()) {
+    const scored = await scoreRelevance(
+      q,
+      pool.map((p) => ({
+        id: p.id,
+        text: `${p.personName ?? "unknown person"}: ${p.content}`,
+      })),
+    );
+    if (scored) {
+      judged = true;
+      const byScore = new Map(scored.map((s) => [s.id, s.score]));
+      ranked = pool
+        .map((p) => ({ ...p, judgeScore: byScore.get(p.id) ?? 0 }))
+        .filter((p) => p.judgeScore >= RELEVANCE_MIN_SCORE)
+        .sort((a, b) => b.judgeScore - a.judgeScore)
+        .slice(0, limit);
+      if (ranked.length === 0) {
+        // Calibrated abstention: nothing relevant — skip synthesis entirely.
+        audit(userId, "recall_abstain", {
+          reason: "no_candidate_above_threshold",
+          threshold: RELEVANCE_MIN_SCORE,
+          candidates: pool.length,
+          topScore: scored[0]?.score ?? null,
+        });
+        return { answer: "I don't have a memory of that yet.", citations: [] };
+      }
+    }
+  }
+  if (!judged && !fromWalrus) {
+    // Legacy path: Bedrock generative rerank over the local pool.
+    const topIds = await rerankRecall(
+      q,
+      pool.map((r) => ({ id: r.id, content: r.content })),
+    );
+    const byId = new Map(pool.map((r) => [r.id, r]));
+    const reranked = topIds
+      .map((id) => byId.get(id))
+      .filter((r): r is Cand => r != null);
+    ranked = (reranked.length > 0 ? reranked : searchMemories(userId, q, limit).map((r) => ({
+      id: r.id,
+      personId: r.person_id,
+      personName: r.person_name,
+      content: r.content,
+      occurredAt: r.occurred_at,
+      baseScore: 0,
+    }))).slice(0, limit);
+    if (ranked.length === 0) ranked = pool.slice(0, limit);
+  } else {
+    ranked = ranked.slice(0, limit);
+  }
+
+  // 3. Synthesize from ranked context (generation only — decisions are made).
+  const answer = await synthesizeRecall(
+    q,
+    ranked.map((r) => ({
+      id: r.id,
+      personName: r.personName,
+      content: r.content,
+      occurredAt: r.occurredAt,
     })),
   );
+
+  // 4. Verify every citation against its source memory (batched, one call).
+  let citations: RecallCitation[] = ranked.map((r, i) => ({
+    memoryId: r.id,
+    personId: r.personId,
+    personName: r.personName,
+    snippet: r.content.slice(0, 240),
+    occurredAt: r.occurredAt,
+    score:
+      "judgeScore" in r && typeof (r as { judgeScore?: number }).judgeScore === "number"
+        ? Number(((r as { judgeScore: number }).judgeScore).toFixed(3))
+        : (r.baseScore || Number((1 / (1 + i * 0.25)).toFixed(3))),
+    verified: null,
+    checkConfidence: null,
+  }));
+  if (isJudgeConfigured() && !answer.startsWith("I don't have a memory")) {
+    const verdicts = await verifyCitations(
+      ranked.map((r) => ({ id: r.id, claim: answer, source: r.content })),
+    );
+    if (verdicts) {
+      citations = citations
+        .map((c) => {
+          const v = verdicts[c.memoryId];
+          // "verified" is an auto-accept claim: verdict + confidence above
+          // threshold. Anything weaker shows without the badge.
+          const verified: RecallCitation["verified"] =
+            v?.verdict === "verified" && (v?.confidence ?? 0) >= CITATION_AUTO_ACCEPT
+              ? "verified"
+              : v?.verdict === "contradicted"
+                ? "contradicted"
+                : "unsupported";
+          return {
+            ...c,
+            verified,
+            checkConfidence: v?.confidence ?? 0,
+          };
+        })
+        // A contradicted citation means synthesis drifted — never show it.
+        .filter((c) => c.verified !== "contradicted");
+      if (citations.length === 0) {
+        audit(userId, "recall_abstain", { reason: "all_citations_contradicted" });
+        return { answer: "I don't have a memory of that yet.", citations: [] };
+      }
+    }
+  }
 
   return { answer, citations };
 }
@@ -290,72 +434,49 @@ export async function recall(
 // --- People & profiles -----------------------------------------------------
 
 export async function listPeople(userId: string): Promise<Person[]> {
-  return await query<Person>(
-    `SELECT * FROM person WHERE user_id = $1 ORDER BY last_interaction_at DESC NULLS LAST, name ASC`,
-    [userId],
-  );
+  return storeListPeople(userId);
 }
 
 export async function getPerson(
   userId: string,
   personId: string,
 ): Promise<Person | null> {
-  return await queryOne<Person>(
-    `SELECT * FROM person WHERE id = $1 AND user_id = $2`,
-    [personId, userId],
-  );
+  return storeGetPerson(userId, personId);
 }
 
 export async function getPersonFacts(
   userId: string,
   personId: string,
 ): Promise<Fact[]> {
-  return await query<Fact>(
-    `SELECT * FROM fact WHERE user_id = $1 AND person_id = $2 ORDER BY created_at DESC`,
-    [userId, personId],
-  );
+  return storeGetPersonFacts(userId, personId);
 }
 
 export async function getPersonMemories(
   userId: string,
   personId: string,
 ): Promise<Memory[]> {
-  return await query<Memory>(
-    `SELECT * FROM memory WHERE user_id = $1 AND person_id = $2 ORDER BY occurred_at DESC`,
-    [userId, personId],
-  );
+  return storeRecentMemories(userId, 500).filter((m) => m.person_id === personId);
 }
 
 // --- Today feed & commitments ---------------------------------------------
 
 /**
- * Build the "Today" feed: open commitments that are due/overdue, plus stale
- * relationships (no interaction in 30+ days). Ordered by urgency.
+ * Build the "Today" feed: open commitments that are due/overdue.
+ * Ordered by urgency.
  */
 export async function getTodayFeed(userId: string): Promise<TodayItem[]> {
-  const dueRows = await query<Commitment & { person_name: string | null }>(
-    `SELECT c.*, p.name AS person_name
-       FROM commitment c
-       LEFT JOIN person p ON p.id = c.person_id
-      WHERE c.user_id = $1
-        AND c.status = 'open'
-        AND (c.due_at IS NULL OR c.due_at <= now() + INTERVAL '1 day')
-      ORDER BY c.due_at ASC NULLS LAST
-      LIMIT 50`,
-    [userId],
-  );
-
-  const items: TodayItem[] = dueRows.map((c) => {
+  const due = todayCommitments(userId);
+  const peopleById = new Map(storeListPeople(userId).map((p) => [p.id, p.name]));
+  return due.map((c: Commitment) => {
+    const personName = c.person_id ? (peopleById.get(c.person_id) ?? null) : null;
     const overdue = c.due_at ? new Date(c.due_at).getTime() < Date.now() : false;
     return {
       commitment: c,
-      personName: c.person_name,
+      personName,
       reason: overdue ? "overdue" : "due",
-      draftMessage: buildDraft(c.person_name, c.description),
-    };
+      draftMessage: buildDraft(personName, c.description),
+    } as TodayItem;
   });
-
-  return items;
 }
 
 function buildDraft(personName: string | null, description: string): string {
@@ -368,31 +489,18 @@ export async function updateCommitmentStatus(
   commitmentId: string,
   status: "done" | "snoozed" | "dismissed",
 ): Promise<void> {
-  const snoozeClause = status === "snoozed" ? `, due_at = now() + INTERVAL '3 days'` : "";
-  const resetStatus = status === "snoozed" ? "open" : status;
-  await query(
-    `UPDATE commitment
-        SET status = $3, updated_at = now()${snoozeClause}
-      WHERE id = $1 AND user_id = $2`,
-    [commitmentId, userId, resetStatus],
-  );
-  await query(
-    `INSERT INTO audit_log (user_id, action, detail) VALUES ($1, 'commitment_status', $2)`,
-    [userId, JSON.stringify({ commitmentId, status })],
-  );
+  storeUpdateCommitmentStatus(userId, commitmentId, status);
+  audit(userId, "commitment_status", { commitmentId, status });
 }
 
 export async function recentMemories(
   userId: string,
   limit = 20,
 ): Promise<(Memory & { person_name: string | null })[]> {
-  return await query<Memory & { person_name: string | null }>(
-    `SELECT m.*, p.name AS person_name
-       FROM memory m
-       LEFT JOIN person p ON p.id = m.person_id
-      WHERE m.user_id = $1
-      ORDER BY m.occurred_at DESC
-      LIMIT $2`,
-    [userId, limit],
-  );
+  return storeRecentMemories(userId, limit);
+}
+
+/** Record a late-arriving Walrus blob id on a memory saved while offline. */
+export async function attachBlobId(memoryId: string, blobId: string): Promise<void> {
+  setMemoryBlob(memoryId, blobId);
 }

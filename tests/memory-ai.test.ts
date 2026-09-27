@@ -1,33 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { embed, extractMemory } from "@/lib/ai";
+import { extractMemory } from "@/lib/ai";
 
 // AI_PROVIDER=mock is set in vitest.config.ts, so these exercise the
 // deterministic local paths — no AWS credentials required.
-
-describe("embed (mock path)", () => {
-  it("returns a vector of the configured dimension", async () => {
-    const v = await embed("Met Sarah at the AI meetup");
-    expect(v).toHaveLength(1024);
-  });
-
-  it("produces L2-normalized vectors", async () => {
-    const v = await embed("some text to embed");
-    const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
-    expect(norm).toBeCloseTo(1, 5);
-  });
-
-  it("is deterministic — same text yields identical vector", async () => {
-    const a = await embed("Coffee with Marcus");
-    const b = await embed("Coffee with Marcus");
-    expect(a).toEqual(b);
-  });
-
-  it("yields different vectors for different text", async () => {
-    const a = await embed("Met Sarah Chen at Nimbus");
-    const b = await embed("Dinner with Ravi at Datadog");
-    expect(a).not.toEqual(b);
-  });
-});
 
 describe("extractMemory (mock path)", () => {
   it("extracts a person name from a 'met with' sentence", async () => {

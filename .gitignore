@@ -26,6 +26,9 @@ pnpm-debug.log*
 .env*.local
 .env.production
 
+# local projection store (runtime state; Walrus is the durable memory)
+data/
+
 # typescript
 *.tsbuildinfo
 

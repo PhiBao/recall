@@ -1,189 +1,185 @@
 # 🪳 Recall — Remember Every Person
 
-**Recall is a relationship-memory agent.** You tell it, in plain words, about the
-people you meet ("Met Sarah at the AI meetup, she's hiring React devs, I promised
-to intro her to Priya"). Recall extracts the person, the durable facts, and the
-follow-ups you owe — then lets you **ask questions in natural language** and get
-answers grounded in the *exact* memories they came from. It also builds a daily
+**Recall is a relationship-memory chatbot built on Walrus.** You tell it, in
+plain words, about the people you meet ("Met Sarah at the AI meetup, she's
+hiring React devs, I promised to intro her to Priya") — and every memory
+becomes an **encrypted blob on Walrus**, recalled semantically across
+sessions through **Walrus Memory**. Ask questions in natural language, get
+answers grounded in the *exact* memories they came from, and get a daily
 **"Today" feed** so relationships never quietly go cold.
 
-Built for the **CockroachDB AI Hackathon**. Recall's thesis: an AI that helps you
-remember people is only useful if its memory is **durable, consistent, and
-trustworthy**. That is precisely a database problem — and it's why the whole
-thing runs on **one CockroachDB cluster** that stores *both* the structured
-relational memory *and* the semantic vector memory, with **no second vector
-store to keep in sync**.
+Built for **Walrus Session 8: Chatbots That Remember**. Recall's thesis: an AI
+that helps you remember people is only useful if its memory is **durable,
+portable, and trustworthy** — memory that survives sessions, moves across
+apps, and never gets invented. Walrus is that layer; everything else in this
+repo exists to serve it.
 
 > ### 🚀 Live demo
 > **https://main.d1920llq7pdf9e.amplifyapp.com** — deployed on AWS Amplify
-> Hosting, backed by CockroachDB Cloud (relational + distributed vector index)
-> and Amazon Bedrock. Sign in with any email (or `demo@recall.app` for seeded
-> data). Health: `GET /api/health`.
+> Hosting, backed by Walrus Memory on mainnet. Sign in with any email (or
+> `demo@recall.app` for seeded data). Health + blob proof:
+> `GET /api/health` → `counts.walrus_blobs`.
 
 ---
 
 ## Why this is a real product (not a dashboard)
 
-- **User problem:** People with large networks (founders, salespeople, recruiters,
-  investors, community builders) forget names, context, and promises. Existing
-  CRMs are heavy data-entry tools; note apps don't *recall*. The pain is frequent,
-  emotionally charged (embarrassment, lost deals), and poorly served.
+- **User problem:** People with large networks (founders, salespeople,
+  recruiters, investors, community builders) forget names, context, and
+  promises. Existing CRMs are heavy data-entry tools; note apps don't
+  *recall*. The pain is frequent, emotionally charged (embarrassment, lost
+  deals), and poorly served.
 - **The wedge:** capture is *conversational* (one sentence), recall is *cited*
   (never invented), and follow-up is *proactive* (a daily nudge). No forms, no
   pipeline stages, no admin panel.
-- **The moat is the memory:** value compounds the more you tell it, and correctness
-  depends on a store that is strongly consistent and never drifts — CockroachDB.
+- **The moat is the memory:** value compounds the more you tell it — and
+  because that memory lives on Walrus, it is **portable across sessions, apps,
+  and providers**, encrypted by default, and independently verifiable. Your
+  network is yours, not your app's.
 
 ---
 
-## How CockroachDB is used (the core of the entry)
+## How Walrus powers Recall (the core of the entry)
 
-Recall puts **relational rows and vector embeddings in the same transactional
-database**, and exposes that memory layer to *two* agents. This entry uses
-**two CockroachDB AI tools**:
+Walrus is not a feature here — it is the memory. The local process keeps only
+a thin structured projection (people, facts, due dates); every word the user
+said lives in Walrus:
 
-### 1. Distributed Vector Indexing — the memory engine
+- **Capture** (`lib/memory.ts: captureMemory`): Bedrock extracts person +
+  facts + commitments → Jev resolves *which* person (Choice over roster +
+  spans, never invented) → the enriched text is persisted via Walrus Memory
+  into the user's namespace (`recall-<userId>`) → the returned **blob id**
+  lands on the local memory row. One capture = one certified mainnet blob.
+- **Recall** (`lib/memory.ts: recall`): `memwal.recall()` searches the user's
+  namespace by meaning — *"who's hiring frontend people?"* finds *"hiring
+  senior React engineers"* — then Jev ranks the shortlist with calibrated
+  0–1 scores, sub-threshold pools **abstain without a synthesis call**, and
+  every shown citation carries a machine-checked verdict (✓ verified,
+  contradicted hidden).
+- **Multi-tenant isolation** (`lib/memwal.ts`): one operator MemWalAccount
+  pays for storage (no per-user funding); each app user gets a deterministic
+  namespace. Recall is scoped per account + namespace; the delegate key never
+  leaves the server.
+- **Portable by construction:** the same namespace is readable from the web
+  app *and* from any agent via Recall's per-user MCP server (`/api/mcp`) —
+  web-captured memories answer Claude Code questions with zero re-entry.
+- **Resilient by design:** if Walrus is unreachable (or unconfigured in local
+  dev), capture still saves locally and recall falls back to keyword search +
+  generative rerank — the product never loses what you told it. `restore()`
+  rebuilds the relayer index from Walrus blobs at any time.
 
-- `person`, `memory`, `fact`, `commitment` — normalized relational data.
-- `memory_embedding` uses the native **`VECTOR(1024)` type** with a
-  **`CREATE VECTOR INDEX`** (CockroachDB Distributed Vector Index) for fast
-  semantic KNN.
-- **Capture is one transaction:** the raw memory, its embedding, extracted facts,
-  and commitments are written together. If anything fails, it all rolls back —
-  so the vector index and the relational facts can **never drift out of sync**
-  (the classic Postgres + Pinecone failure mode).
-- **Recall is one query:** semantic similarity (`embedding <-> $query`) is joined
-  to `person`/`memory` and filtered by `user_id` in a single SQL statement —
-  hybrid vector + relational retrieval, strongly consistent, on one engine.
-- **Resilient retrieval:** when real embeddings aren't available (no Bedrock
-  model access), Recall automatically swaps to an **LLM reranker** — the text
-  model (Bedrock API key only) ranks a recent-memory pool by meaning, blended
-  with KNN top candidates. Paraphrase recall ("who's recruiting frontend
-  people?" → "hiring senior React engineers") works in both modes.
-
-Every recall answer returns **citations** to the source memory rows, so the
+Every recall answer returns **citations** to the source memories, so the
 answer is auditable and never fabricated.
 
-### 2. Managed MCP Server — the ops agent
+### Recall's own MCP server, per user
 
-The **CockroachDB Cloud Managed MCP Server** (`https://cockroachlabs.cloud/mcp`)
-is a hosted service that connects a *second* AI agent (Claude Code, Cursor,
-GitHub Copilot, Cline, Codex) directly to your cluster — audited, zero custom
-proxy. It exposes read tools (`select_query`, `show_statement`, `list_tables`,
-`get_table_schema`) that let the agent inspect the memory engine: querying the
-audit log, checking data health, surfacing insights about the user's network.
+Every signed-in user can generate an API key in the app and connect their
+agent to *their own* Walrus-backed memory at `/api/mcp` (read-only,
+auto-scoped by user): `list_people`, `search_memories`, `ask_memory`,
+`get_person`, `get_today`, `recent_memories`. See
+**[docs/ops-agent.md](docs/ops-agent.md)** for the exact steps, per-tool
+configs, and example prompts.
 
-Connect in one command (`claude mcp add cockroachdb-cloud
-https://cockroachlabs.cloud/mcp --transport http`) and authenticate with your
-Cloud login (OAuth) or a service-account API key. See
+### Calibrated judgments: Jev decides, Voxtral writes
 
-**Bonus — Recall's own MCP server, per user.** Every signed-in user can
-generate an API key in the app and connect their agent to *their own* memory at
-`/api/mcp` (read-only, auto-scoped by user). See
-**[docs/ops-agent.md](docs/ops-agent.md)**.
-**[docs/ops-agent.md](docs/ops-agent.md)** for the exact steps, per-tool configs,
-and example prompts.
+A generative LLM writes good words and makes unaccountable choices. Recall
+splits the two — every *decision* is a typed TypeSafe (Jev) judgment with
+probabilities + confidence, and the generative model only renders prose from
+decided context (`lib/judge.ts`, see **[docs/judgments.md](docs/judgments.md)**).
+Jev is TypeSafe's own model and Voxtral is Mistral — neither is Anthropic or
+OpenAI, so the *Beyond the Big Two* track holds. Every judgment degrades
+gracefully to generative fallbacks when unconfigured.
 
-Two agents, one memory layer — that's the production-grade architecture the
-hackathon is asking for. See **[docs/ops-agent.md](docs/ops-agent.md)** for the
-setup, example queries, and the demo script.
+### Prose renderer: Bedrock Mantle (Mistral Voxtral Mini 3B)
 
----
-
-## AWS Bedrock
-
-- **Extraction & recall synthesis:** Amazon Bedrock **Mantle** endpoint
-  (OpenAI-compatible Chat Completions) authenticated with a single **Bedrock
-  API key**. Default model is Voxtral Mini 3B — the cheapest model that reliably
-  produces the structured-extraction JSON. Answers questions **only** from
-  retrieved memories (grounded, with a strict "I don't have a memory of that
-  yet" fallback — no hallucinated relationships).
-- **Embeddings:** Amazon Titan Text Embeddings v2 (1024-dim) → stored in the
-  CockroachDB vector index. Requires IAM access keys (the API key alone can't
-  call the embeddings API); without them Recall uses a deterministic local
-  hash embedding so semantic recall still works.
-
-> **No AWS credentials? It still runs.** Set `AI_PROVIDER=mock` (or just leave
-> the Bedrock API key / access keys blank) and Recall uses a deterministic local
-> extractor + hash embedding so you can run the full product and demo
-> end-to-end. The real Bedrock path is used automatically when auth is present.
+One bearer API key, no IAM, no vector code: extraction JSON + answer synthesis
+only. With no key (`AI_PROVIDER=mock`) or no Walrus/TypeSafe keys, deterministic
+local paths keep the full product demoable end-to-end.
 
 ---
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    User(["User"]) --> UI["Recall UI<br/>(Next.js Composer)"]
+    UI --> Route{"Jev route<br/>remember | recall"}
+
+    Route -->|remember| Cap["captureMemory"]
+    Cap --> Person{"Jev resolve<br/>person?"}
+    Person --> WalrusW["memwal.remember<br/>namespace recall-userId"]
+    WalrusW --> Blob[("Walrus blob<br/>Seal-encrypted")]
+    Cap --> Proj[("Projection<br/>people / facts / due dates")]
+
+    Route -->|recall| Fast["memwal.recall<br/>semantic shortlist"]
+    Blob -.-> Fast
+    Fast --> Rank{"Jev Noul rank<br/>≥ 0.35?"}
+    Rank -->|none pass| Abstain["abstain<br/>no synthesis call"]
+    Rank --> Synth["Voxtral synthesis<br/>words only"]
+    Synth --> Verify{"Jev citation check<br/>supports?"}
+    Verify -->|contradicted| Hide["hidden / withheld"]
+    Verify --> Cited["cited answer ✓"]
+
+    Blob -.->|same namespace| MCP["MCP agent<br/>Claude / Cursor"]
+    Proj -.-> MCP
+```
+
 ```
 app/                     Next.js 15 App Router (React 19, server components)
   page.tsx               Landing + passwordless sign-in
   app/page.tsx           Main workspace: Composer + Today feed + People
-  app/person/[id]/       Person profile: facts + memory timeline
+  app/person/[id]/       Person profile: facts + memory timeline + blob links
   actions.ts             Server actions (only write path; auth-scoped)
 components/
-  Composer.tsx           One box, two intents: "Remember" / "Recall" (cited)
+  Composer.tsx           One box, auto-routed: Remember / Recall (cited ✓)
   TodayCard.tsx          Follow-up card: Done / Snooze / copy draft
 lib/
-  schema.sql             CockroachDB schema incl. VECTOR INDEX
-  db.ts                  Pooled, parameterized SQL + transaction helper
-  ai.ts                  Bedrock Mantle (Voxtral Mini) + Titan with deterministic fallback
-  memory.ts              Domain logic: captureMemory() + recall() (hybrid query)
+  memwal.ts              Walrus Memory client + per-user namespaces
+  judge.ts               TypeSafe judgments: route, resolve, rank, verify
+  store.ts               Local projection (people/facts/commitments/users)
+  memory.ts              Domain logic: captureMemory() + recall()
+  ai.ts                  Bedrock Mantle prose (Voxtral Mini) + mock fallback
   auth.ts                Signed httpOnly session; strict per-user isolation
-  env.ts                 Zod-validated, fail-fast config
+  env.ts                 Zod-validated, fail-fast config (no DB, no IAM)
 scripts/
-  migrate.ts             Apply schema        (pnpm db:migrate)
-  seed.ts                Seed demo memories  (pnpm db:seed)
+  verify-memwal.ts       Prove the Walrus round-trip (pnpm memwal:verify)
+  verify-judge.ts        Prove the judgments live (pnpm judge:verify)
+  seed.ts                Seed demo memories (pnpm seed — real Walrus blobs)
   run-nudges.ts          Daily reconnect nudges (pnpm nudge:run)
-  verify-embeddings.ts   Prove real Titan path  (pnpm embed:verify)
-  reseed-embeddings.ts   Regenerate vectors    (pnpm db:seed-embeddings)
 docs/
-  ops-agent.md           MCP Server ops-agent workflow + demo script
-  embedding-fix.md       Enabling real Titan embeddings
+  ops-agent.md           MCP server workflow + demo script
+  judgments.md           Judgment thresholds, fallbacks, cost/latency
+  submission-checklist.md Walrus Session 8 eligibility + prize tracks
+  video-script.md        Before/after demo recording script
+  walrus-feedback.md     Session feedback draft + bug-bounty tracker
 ```
-
-### Two agents, one memory layer
-
-```
- ┌──────────────┐        capture / recall         ┌─────────────────────────┐
- │  Recall UI   │ ──────────────────────────────► │                         │
- │  (Next.js)   │ ◄────────────────────────────── │     CockroachDB Cloud   │
- └──────────────┘        cited answers            │                         │
-                                                  │  person / memory / fact │
- ┌──────────────┐   read-only, audited queries    │  commitment / audit_log │
- │  Ops Agent   │ ──────────────────────────────► │  memory_embedding       │
- │ (Claude/     │ ◄────────────────────────────── │    (VECTOR + vec index) │
- │  Cursor via  │        insights                 │                         │
- │  MCP Server) │                                 └─────────────────────────┘
- └──────────────┘                                             │
-                                                              │ embeddings
-                                                              ▼
-                                                       ┌─────────────┐
-                                                       │ AWS Bedrock │
-                                                       │ (Titan v2)  │
-                                                       └─────────────┘
-```
-
 ---
 
 ## Getting started
 
 ### 1. Prerequisites
 - Node ≥ 20 (tested on 22), `pnpm`
-- A CockroachDB cluster **v24.3+** (required for vector indexing).
-  - Free option: [CockroachDB Cloud Serverless](https://cockroachlabs.cloud/).
-  - Local: `cockroach start-single-node --insecure` then
-    `cockroach sql --insecure -e "CREATE DATABASE recall;"`
+- A Walrus Memory account: generate one at
+  [memory.walrus.xyz](https://memory.walrus.xyz) (mainnet — required for the
+  Session's ≥10-blob proof) or
+  [staging.memory.walrus.xyz](https://staging.memory.walrus.xyz) (testnet).
+  No database to install — the structured projection is a local JSON file.
 
 ### 2. Configure
 ```bash
 cp .env.example .env.local
-# set DATABASE_URL, AUTH_SECRET (openssl rand -base64 48)
-# optional: Bedrock API key (or IAM access keys) — or set AI_PROVIDER=mock to run without
+# set AUTH_SECRET (openssl rand -base64 48)
+# set MEMWAL_PRIVATE_KEY + MEMWAL_ACCOUNT_ID (from the dashboard above)
+# optional: BEDROCK_API_KEY + TYPESAFE_API_KEY — or AI_PROVIDER=mock for zero-cred demo
 ```
 
-### 3. Install, migrate, seed
+### 3. Install, init, prove, seed
 ```bash
 pnpm install
-pnpm db:migrate      # creates tables + VECTOR INDEX
-pnpm db:seed         # optional: demo user with realistic memories
+pnpm store:init       # ensure the local projection file exists
+pnpm memwal:verify    # prove the Walrus round-trip (health → blob → recall)
+pnpm judge:verify     # prove the judgments live (route → resolve → rank → verify)
+pnpm seed             # optional: demo user with realistic memories (real blobs)
 ```
 
 ### 4. Run
@@ -195,18 +191,24 @@ instantly). If you seeded, sign in as **`demo@recall.app`**.
 
 ---
 
-## Try it (90-second demo script)
+## Try it (90-second demo script — the before/after judges score)
 
-1. **Remember:** paste
+1. **Before (amnesia baseline):** in a fresh session with no memories, ask
+   *"Who do I know that's hiring React engineers?"* → "I don't have a memory
+   of that yet."
+2. **Remember:** paste
    *"Met Sarah Chen at the AI meetup — founder at Nimbus, ex-Stripe, hiring senior
    React engineers. Promised to intro her to Priya."*
-   → Recall confirms what it saved and adds the follow-up to **Today**.
-2. Add two more people the same way.
-3. **Recall:** switch to the *Recall* tab and ask
-   *"Who did I meet that's hiring React engineers?"*
-   → You get a natural-language answer **plus the exact memory it came from**
-   (click the name to open the person's profile + timeline).
-4. **Follow through:** in the **Today** panel, hit *Done* / *Snooze*, or copy the
+   → Recall confirms what it saved (as a Walrus blob) and adds the follow-up
+   to **Today**.
+3. Add two more people the same way.
+4. **Recall (new session, different words):** ask
+   *"Who did I meet that's hiring frontend people?"*
+   → You get a natural-language answer **plus the exact memory it came from**,
+   scored (e.g. 0.95) and ✓-verified — click the name to open the person's
+   profile + timeline. Same question the amnesiac bot failed — now answered
+   from portable memory.
+5. **Follow through:** in the **Today** panel, hit *Done* / *Snooze*, or copy the
    pre-drafted reconnect message.
 
 ---
@@ -215,52 +217,54 @@ instantly). If you seeded, sign in as **`demo@recall.app`**.
 
 Security is treated as an engineering requirement:
 
-- **Per-user isolation:** every query is scoped by the authenticated `user_id`;
-  there is no cross-user read/write path. Server actions resolve the user before
-  any data access.
-- **Parameterized SQL everywhere** (`$1, $2 …`) — no string interpolation, no SQL
-  injection surface. Inputs validated with Zod and length-capped.
+- **Memory is encrypted before storage** (Seal) and owned by the operator
+  account; per-user isolation is enforced server-side via namespaces — the
+  delegate key never reaches the browser.
+- **Per-user isolation:** every projection query is scoped by the authenticated
+  `user_id`; there is no cross-user read/write path. Server actions resolve
+  the user before any data access.
 - **Sessions** are signed (HS256, `jose`), `httpOnly`, `sameSite=lax`, `secure`
   in production.
 - **Grounded AI:** recall answers are constrained to retrieved memories and cite
-  their sources; the model is instructed never to invent relationships.
-- **Audit log:** captures and status changes are recorded in `audit_log`.
+  their sources; citations are machine-verified and contradictions are
+  withheld, never shown.
+- **Audit log:** captures, recalls, abstentions, and status changes are
+  recorded in the projection.
 - **Rate limiting:** capture and recall are bounded per user (token bucket,
-  30 req/min) so a runaway client can't exhaust Bedrock quota or spam the DB.
-- **Structured logging:** every sign-in, capture, recall, and status change
-  emits one JSON line (`lib/log.ts`) with the user id and outcome — ready for
-  CloudWatch Logs indexing, no prose parsing.
+  30 req/min) so a runaway client can't exhaust quotas or spam Walrus.
+- **Structured logging:** every sign-in, capture, recall, judgment, and status
+  change emits one JSON line (`lib/log.ts`) — ready for CloudWatch Logs
+  indexing, no prose parsing.
 - **Fail-fast config:** `lib/env.ts` validates env at startup so misconfiguration
   can't silently ship.
 
 **MVP non-goals (documented, not accidental):** email magic-link *verification*
 is stubbed (sign-in issues a session directly) for a frictionless demo; add a
-one-time-link step before production. Per-field encryption at rest is future
-work.
+one-time-link step before production. Per-field encryption at rest in the local
+projection is future work (Walrus blobs are already Seal-encrypted).
 
 ---
 
-## AWS services used
+## Services used
 
-- **Amazon Bedrock — Mantle endpoint** (Chat Completions): powers memory
-  extraction and recall synthesis via Voxtral Mini 3B, authenticated with a
-  Bedrock API key. Answers are grounded only in retrieved memories.
-- **Amazon Bedrock — Titan Text Embeddings v2**: produces the 1024-dim vectors
-  stored in the CockroachDB vector index. Requires IAM access keys.
-- **AWS Amplify Hosting**: deploys the Next.js app from the GitHub repo
-  (no Docker/ECR) and serves the live demo URL — see
-  `docs/deploy-amplify.md`.
+- **Walrus Memory (mainnet)** — the memory layer: encrypted blobs, semantic
+  recall, per-user namespaces. Blob proof: `GET /api/health` →
+  `counts.walrus_blobs`.
+- **TypeSafe (Jev)** — every decision: intent, identity, relevance, citation
+  verdicts. Proof: `pnpm judge:verify`.
+- **Amazon Bedrock — Mantle endpoint** (Chat Completions via Voxtral Mini 3B,
+  Mistral — *Beyond the Big Two* track): prose generation only.
+- **AWS Amplify Hosting**: deploys the Next.js app from the GitHub repo and
+  serves the live demo URL — see `docs/deploy-amplify.md`.
 - **AWS Lambda + EventBridge** *(optional)*: runs the daily nudge cron
-  serverlessly (see `infra/nudge-lambda.ts`). The proactive "Today" feed is an
-  agent that acts without being asked.
-
-> The required AWS category (Bedrock) is met, and the app is deployed on AWS
-> via Amplify Hosting so judges get a live URL.
+  serverlessly (see `infra/nudge-lambda.ts`).
 
 ## Tech
-Next.js 15 · React 19 · TypeScript (strict) · Tailwind · CockroachDB (relational +
-distributed vector index · managed MCP Server) · AWS Bedrock (Mantle + Titan) ·
-AWS Lambda · AWS Amplify Hosting · `pg` · `jose` · Zod.
+Next.js 15 · React 19 · TypeScript (strict) · Tailwind · Walrus Memory
+(portable encrypted memory + semantic recall · per-user namespaces · MCP
+server) · TypeSafe Jev (calibrated judgments: route, resolve, rank, verify) ·
+AWS Bedrock (Mantle + Voxtral Mini 3B, prose only) · AWS Lambda · AWS Amplify
+Hosting · `jose` · Zod.
 
 ## License
 MIT — see [LICENSE](./LICENSE).

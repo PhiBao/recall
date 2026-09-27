@@ -10,8 +10,10 @@
 - **Source:** `https://github.com/PhiBao/recall` (branch `main`) via a GitHub PAT
 - **Platform:** `WEB_COMPUTE` (Next.js SSR / server actions support)
 - **Build:** `amplify.yml` (corepack + pnpm install + pnpm build)
-- **Runtime env:** DATABASE_URL (sslmode=require, no local cert), AUTH_SECRET,
-  AWS/Bedrock keys, model IDs — set via `--environment-variables`
+- **Runtime env:** AUTH_SECRET, Bedrock keys/model IDs, MEMWAL_* (Walrus operator
+  account) — set via `--environment-variables`. No database URL: durable memory
+  lives in Walrus Memory; the structured projection is a local JSON file
+  (ephemeral on Amplify — Walrus remains the source of truth).
 - **Demo URL:** `https://main.<APP_ID>.amplifyapp.com`
 
 The Next.js app runs as a server (server actions, `/api/health`) on Amplify's
@@ -69,7 +71,7 @@ aws amplify create-app \
   --access-token "$GITHUB_TOKEN" \
   --iam-service-role-arn arn:aws:iam::381492277789:role/AmplifyServiceRoleRecall \
   --compute-role-arn arn:aws:iam::381492277789:role/AmplifySSRComputeRole \
-  --environment-variables "$(env | grep -E '^(DATABASE_URL|AUTH_SECRET|AWS_|BEDROCK_|EMBED_|AI_PROVIDER|NODE_ENV)=' | tr '\n' ',')"
+  --environment-variables "$(env | grep -E '^(AUTH_SECRET|AWS_|RECALL_|BEDROCK_|MEMWAL_|AI_PROVIDER|NODE_ENV)=' | tr '\n' ',')"
 
 # 3. Create the branch, THEN set env vars again (create-branch drops them)
 aws amplify create-branch --app-id <APP_ID> --branch-name main \
@@ -79,7 +81,7 @@ aws amplify update-branch --app-id <APP_ID> --branch-name main \
 ```
 
 `deploy-amplify.ts` prints the exact command with env vars derived from
-`.env.local` (with the CockroachDB URL already fixed for the cloud).
+`.env.local`.
 
 ## Gotchas learned the hard way (read before deploying)
 
@@ -93,9 +95,9 @@ aws amplify update-branch --app-id <APP_ID> --branch-name main \
    until the app had an **IAM service role** (`--iam-service-role-arn`) with
    `AdministratorAccess-Amplify`. Without it, Amplify can't fetch env vars from
    Parameter Store (`/amplify/<appId>/<branch>/*`).
-3. **Amplify rejects `AWS_`-prefixed env vars.** The app reads Bedrock IAM keys
-   from `RECALL_AWS_ACCESS_KEY_ID` / `RECALL_AWS_SECRET_ACCESS_KEY` for exactly
-   this reason.
+3. **Amplify rejects `AWS_`-prefixed env vars.** The app needs no IAM keys at
+   all (Bedrock Mantle uses a bearer API key; Walrus/TypeSafe use theirs), so
+   nothing is lost — just don't set any `AWS_*` vars.
 4. **The framework must be "Next.js - SSR"** (not "Next.js 15") or the deploy
    step fails with a CustomerError even though the build succeeds.
 
@@ -103,23 +105,26 @@ aws amplify update-branch --app-id <APP_ID> --branch-name main \
 
 1. `aws amplify list-jobs --app-id <APP_ID> --branch-name main` to watch the build.
 2. Open the returned URL: `https://main.<APP_ID>.amplifyapp.com`
-3. Check `GET /api/health` → expect `database: connected`, `vectorIndex: present`.
-4. Seed the demo data from your local machine (`pnpm db:seed`) — the DB is the
-   same CockroachDB cluster, so the deployed app sees the same memories.
-5. Sign in as `demo@recall.app` and run the demo script from
-   `docs/video-script.md`.
+3. Check `GET /api/health` → expect `status: ok`, `walrus.reachable: true`,
+   `counts.walrus_blobs ≥ 10`.
+4. Seed from your local machine ONLY for a local demo. The Amplify projection
+   is ephemeral — each deploy starts empty, and Walrus blobs are per-user
+   namespace, so production memories must be captured through the live app
+   (sign in as `demo@recall.app` there and capture the same six stories, or
+   run the demo script from `docs/video-script.md`).
 
 ## Required AWS services (hackathon checklist)
 
 | Service | Used for | Required? |
 |---|---|---|
-| Amazon Bedrock | chat (Mantle) + embeddings (Titan) | Yes (≥1 required) |
+| Amazon Bedrock (Voxtral Mini 3B) | extraction + recall synthesis + rerank (non-Anthropic/OpenAI → Beyond the Big Two) | Yes (LLM) |
+| Walrus Memory (mainnet) | durable, encrypted, portable memory blobs + semantic recall | Yes (Session requirement) |
 | AWS Amplify Hosting | hosts the live demo URL (Next.js SSR) | Yes (deployment) |
 | AWS Lambda + EventBridge | daily nudge cron (`infra/nudge-lambda.ts`) | Extra (strengthens entry) |
 
-> The hackathon rule is "deployed on AWS" — Amplify Hosting satisfies it, and
-> the app itself uses Bedrock (the required AWS service). Lambda runs the
-> proactive nudge agent.
+> The Session requires: deployed chatbot + all memory on Walrus mainnet.
+> Amplify hosts the chatbot; MEMWAL_* env vars point it at the operator
+> account that owns the blobs.
 
 
 

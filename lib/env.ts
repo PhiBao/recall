@@ -6,25 +6,37 @@ import { z } from "zod";
  * ship a build that silently misbehaves in production.
  */
 const schema = z.object({
-  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   AUTH_SECRET: z.string().min(16, "AUTH_SECRET must be at least 16 chars"),
 
   AWS_REGION: z.string().default("us-east-1"),
-  AWS_ACCESS_KEY_ID: z.string().optional(),
-  AWS_SECRET_ACCESS_KEY: z.string().optional(),
-  // Hosting platforms (e.g. AWS Amplify) reserve the "AWS_" env prefix, so the
-  // same IAM keys can be supplied under RECALL_AWS_* instead. The AI layer
-  // prefers these when present, falling back to AWS_* for local dev.
-  RECALL_AWS_ACCESS_KEY_ID: z.string().optional(),
-  RECALL_AWS_SECRET_ACCESS_KEY: z.string().optional(),
-  // Bedrock API key (bearer token) — the simple auth path. Either this or IAM creds.
+  // Bedrock API key (bearer token) for the Mantle Chat Completions endpoint.
+  // No IAM keys needed: embeddings live in Walrus Memory's relayer.
   BEDROCK_API_KEY: z.string().optional(),
 
   BEDROCK_TEXT_MODEL_ID: z.string().default("amazon.nova-micro-v1:0"),
-  BEDROCK_EMBED_MODEL_ID: z.string().default("amazon.titan-embed-text-v2:0"),
-  EMBED_DIMENSIONS: z.coerce.number().int().positive().default(1024),
 
   AI_PROVIDER: z.enum(["bedrock", "mock"]).default("bedrock"),
+
+  // Walrus Memory (MemWal) — the durable memory layer. One operator account
+  // pays for storage; per-user isolation is via namespace (see lib/memwal.ts).
+  // Generate at https://memory.walrus.xyz . When unset, the app runs on the
+  // local projection store only (no cross-session Walrus recall).
+  MEMWAL_PRIVATE_KEY: z.string().optional(),
+  MEMWAL_ACCOUNT_ID: z.string().optional(),
+  MEMWAL_SERVER_URL: z
+    .string()
+    .default("https://relayer.memory.walrus.xyz"),
+
+  // TypeSafe (Jev) — every *decision* in the pipeline (intent routing, person
+  // resolution, relevance ranking, citation verification). When unset, those
+  // decisions fall back to the Bedrock generative paths. Prose generation
+  // (extraction JSON, answer synthesis) always stays on Bedrock/Voxtral.
+  TYPESAFE_API_KEY: z.string().optional(),
+  TYPESAFE_MODEL_ID: z.string().default("jev-latest"),
+
+  // Local projection store (people, facts, commitments, users). Overridable
+  // for tests; defaults to ./data/recall.json.
+  RECALL_DATA_PATH: z.string().optional(),
 
   APP_URL: z.string().default("http://localhost:3000"),
   NODE_ENV: z
@@ -49,25 +61,9 @@ export function env(): Env {
   return cached;
 }
 
-/** True when no Bedrock auth is configured or AI_PROVIDER=mock — use deterministic local AI. */
+/** True when no Bedrock API key is configured or AI_PROVIDER=mock. */
 export function isMockAI(): boolean {
   const e = env();
   if (e.AI_PROVIDER === "mock") return true;
-  if (e.BEDROCK_API_KEY) return false;
-  return !(
-    e.AWS_ACCESS_KEY_ID ||
-    e.AWS_SECRET_ACCESS_KEY ||
-    e.RECALL_AWS_ACCESS_KEY_ID ||
-    e.RECALL_AWS_SECRET_ACCESS_KEY
-  );
-}
-
-/**
- * True when running on an AWS compute runtime where the SDK's default
- * credential provider chain can resolve a role (ECS/EC2/AppRunner-style).
- */
-export function onAwsRuntime(): boolean {
-  return process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI != null ||
-    process.env.AWS_EXECUTION_ENV != null ||
-    process.env.AWS_ROLE_ARN != null;
+  return !e.BEDROCK_API_KEY;
 }

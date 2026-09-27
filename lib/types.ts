@@ -28,6 +28,8 @@ export interface Memory {
   person_id: string | null;
   kind: MemoryKind;
   content: string;
+  /** Walrus blob id once the memory is persisted to Walrus Memory (null when offline). */
+  walrus_blob_id: string | null;
   occurred_at: string;
   created_at: string;
 }
@@ -78,6 +80,9 @@ export interface RecallCitation {
   snippet: string;
   occurredAt: string;
   score: number;
+  /** Machine-checked verdict: does the source memory support the answer? */
+  verified?: "verified" | "contradicted" | "unsupported" | null;
+  checkConfidence?: number | null;
 }
 
 /** An item in the "Today" follow-up feed. */

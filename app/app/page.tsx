@@ -11,6 +11,7 @@ import { signOutAction } from "../actions";
 import { Composer } from "@/components/Composer";
 import { TodayCard } from "@/components/TodayCard";
 import { ApiKeysPanel } from "@/components/ApiKeysPanel";
+import { BlobChip } from "@/components/BlobChip";
 
 export default async function AppPage() {
   const user = await getCurrentUser();
@@ -77,6 +78,11 @@ export default async function AppPage() {
                       {m.content.slice(0, 140)}
                       {m.content.length > 140 ? "…" : ""}
                     </span>
+                    {m.walrus_blob_id && (
+                      <span className="mt-1 block">
+                        <BlobChip blobId={m.walrus_blob_id} />
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>

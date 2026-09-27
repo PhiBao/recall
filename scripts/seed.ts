@@ -2,18 +2,18 @@
  * Seed a demo user with a realistic set of networking memories, so the app is
  * immediately explorable (and the demo tells a story).
  *
- * Usage: pnpm db:seed
+ * Usage: pnpm seed
  * Sign in with demo@recall.app to see the seeded memory.
  *
- * This runs the SAME capture pipeline the app uses (extraction → person →
- * memory → embedding → facts → commitments), so the vector index and Today
- * feed are populated exactly as they would be in production.
+ * This runs the SAME capture pipeline the app uses (extraction → Walrus
+ * remember → person → facts → commitments), so every seeded memory becomes a
+ * real blob in Walrus Memory — counting toward the Session's ≥10-blob proof.
  */
 import { loadEnv } from "./load-env";
 loadEnv();
 
-import { query } from "../lib/db";
 import { captureMemory } from "../lib/memory";
+import { createUser, findUserByEmail, loadStore, saveStore } from "../lib/store";
 
 const DEMO_EMAIL = "demo@recall.app";
 const DEMO_NAME = "Alex Rivera";
@@ -28,30 +28,19 @@ const MEMORIES: string[] = [
   "Dinner with Ravi Menon, eng manager at Datadog. Hiring for a platform team. Kid just started playing chess. We talked about on-call culture. Owe him a referral for the SRE role.",
 ];
 
-async function getOrCreateDemoUser(): Promise<string> {
-  const existing = await query<{ id: string }>(
-    `SELECT id FROM app_user WHERE email = $1`,
-    [DEMO_EMAIL],
-  );
-  if (existing[0]) return existing[0].id;
-  const created = await query<{ id: string }>(
-    `INSERT INTO app_user (email, name) VALUES ($1, $2) RETURNING id`,
-    [DEMO_EMAIL, DEMO_NAME],
-  );
-  const id = created[0]?.id;
-  if (!id) throw new Error("Failed to create demo user");
-  return id;
+function getOrCreateDemoUser(): string {
+  const existing = findUserByEmail(DEMO_EMAIL);
+  if (existing) return existing.id;
+  return createUser(DEMO_EMAIL, DEMO_NAME).id;
 }
 
 async function main() {
-  const userId = await getOrCreateDemoUser();
+  const userId = getOrCreateDemoUser();
 
   // Idempotent-ish: skip if this user already has memories.
-  const count = await query<{ n: string }>(
-    `SELECT count(*)::string AS n FROM memory WHERE user_id = $1`,
-    [userId],
-  );
-  if (Number(count[0]?.n ?? "0") > 0) {
+  const store = loadStore();
+  const existing = store.memories.filter((m) => m.user_id === userId).length;
+  if (existing > 0) {
     console.log(
       `[seed] demo user already has memories — skipping. Sign in as ${DEMO_EMAIL}.`,
     );
@@ -61,19 +50,30 @@ async function main() {
   console.log(`[seed] capturing ${MEMORIES.length} memories for ${DEMO_EMAIL}…`);
   for (const [i, text] of MEMORIES.entries()) {
     const res = await captureMemory(userId, text);
-    console.log(`[seed]  ${i + 1}. ${res.summary}`);
+    const blob = res.memory.walrus_blob_id ? ` blob=${res.memory.walrus_blob_id}` : " (local only)";
+    console.log(`[seed]  ${i + 1}. ${res.summary}${blob}`);
   }
 
   // Make a couple of follow-ups overdue so the Today feed is lively.
-  await query(
-    `UPDATE commitment
-        SET due_at = now() - INTERVAL '2 days'
-      WHERE user_id = $1
-        AND id IN (SELECT id FROM commitment WHERE user_id = $1 ORDER BY created_at ASC LIMIT 2)`,
-    [userId],
-  );
+  const ids = loadStore()
+    .commitments.filter((c) => c.user_id === userId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .slice(0, 2)
+    .map((c) => c.id);
+  if (ids.length > 0) {
+    const s = loadStore();
+    for (const c of s.commitments) {
+      if (ids.includes(c.id)) {
+        c.due_at = new Date(Date.now() - 2 * 86400_000).toISOString();
+      }
+    }
+    saveStore();
+  }
 
-  console.log(`[seed] done ✔  Sign in as ${DEMO_EMAIL}`);
+  const blobs = loadStore().memories.filter(
+    (m) => m.user_id === userId && m.walrus_blob_id,
+  ).length;
+  console.log(`[seed] done ✔  Sign in as ${DEMO_EMAIL} (${blobs} Walrus blobs)`);
   process.exit(0);
 }
 

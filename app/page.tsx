@@ -48,7 +48,7 @@ export default async function Home({
         </section>
 
         <footer className="border-t border-paper/10 py-6 text-center text-xs text-paper/40">
-          Built on CockroachDB (distributed vector memory) + AWS Bedrock.
+          Portable memory on Walrus (encrypted, verifiable, yours) + AWS Bedrock.
         </footer>
       </div>
     </main>

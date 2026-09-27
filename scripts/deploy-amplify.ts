@@ -3,8 +3,9 @@
  *
  * Amplify builds the Next.js app directly from the GitHub repo (no Docker, no
  * ECR). This script builds the `aws amplify create-app` payload from
- * .env.local, fixing the CockroachDB URL for the cloud (sslmode=require, no
- * local cert path).
+ * .env.local. There is no database URL anymore: durable memory lives in
+ * Walrus Memory (MEMWAL_*), and the structured projection is a local JSON
+ * file (ephemeral on Amplify — Walrus remains the source of truth).
  *
  * Prerequisites:
  *   1. The IAM user has AdministratorAccess-Amplify (or AmazonAmplifyFullAccess
@@ -45,28 +46,21 @@ function parseEnv(path: string): Record<string, string> {
   return out;
 }
 
-function fixDatabaseUrl(url: string): string {
-  return url
-    .replace("sslmode=verify-full", "sslmode=require")
-    .replace(/&sslrootcert=[^&]*/, "");
-}
-
 async function main() {
   const env = parseEnv(".env.local");
 
   const envVars = {
-    DATABASE_URL: fixDatabaseUrl(env["DATABASE_URL"] ?? ""),
     AUTH_SECRET: env["AUTH_SECRET"] ?? "",
-    // Amplify reserves the "AWS_" env prefix (including AWS_REGION), so the
-    // Bedrock IAM keys go in under RECALL_AWS_* (lib/ai.ts prefers them,
-    // falls back to AWS_* locally) and the region uses the code default.
-    RECALL_AWS_ACCESS_KEY_ID: env["AWS_ACCESS_KEY_ID"] ?? "",
-    RECALL_AWS_SECRET_ACCESS_KEY: env["AWS_SECRET_ACCESS_KEY"] ?? "",
     BEDROCK_API_KEY: env["BEDROCK_API_KEY"] ?? "",
     BEDROCK_TEXT_MODEL_ID: env["BEDROCK_TEXT_MODEL_ID"] ?? "mistral.voxtral-mini-3b-2507",
-    BEDROCK_EMBED_MODEL_ID: env["BEDROCK_EMBED_MODEL_ID"] ?? "amazon.titan-embed-text-v2:0",
-    EMBED_DIMENSIONS: env["EMBED_DIMENSIONS"] ?? "1024",
     AI_PROVIDER: env["AI_PROVIDER"] ?? "bedrock",
+    // Walrus Memory operator account — durable memory layer (mainnet).
+    MEMWAL_PRIVATE_KEY: env["MEMWAL_PRIVATE_KEY"] ?? "",
+    MEMWAL_ACCOUNT_ID: env["MEMWAL_ACCOUNT_ID"] ?? "",
+    MEMWAL_SERVER_URL: env["MEMWAL_SERVER_URL"] ?? "https://relayer.memory.walrus.xyz",
+    // TypeSafe (Jev) — calibrated judgments; falls back to Bedrock when empty.
+    TYPESAFE_API_KEY: env["TYPESAFE_API_KEY"] ?? "",
+    TYPESAFE_MODEL_ID: env["TYPESAFE_MODEL_ID"] ?? "jev-latest",
     NODE_ENV: "production",
   };
 

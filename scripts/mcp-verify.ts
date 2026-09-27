@@ -1,31 +1,19 @@
 /**
- * Verify an MCP connection with your own key.
+ * Verify Recall's own MCP server with your own key.
  *
- * Two modes:
+ * A signed-in user generates an API key in the app (recu_...), which scopes
+ * the MCP tools to THEIR Walrus-backed memory.
+ *   export RECALL_MCP_API_KEY="<your-recall-key>"
+ *   pnpm exec tsx scripts/mcp-verify.ts
  *
- * 1. Recall's own MCP server (per-user): a signed-in user's API key from the
- *    app (recu_...). Reads your OWN memory, scoped to you.
- *      export RECALL_MCP_API_KEY="<your-recall-key>"
- *      pnpm exec tsx scripts/mcp-verify.ts
- *
- * 2. CockroachDB Cloud Managed MCP server: a service-account secret. Reads the
- *    clusters your account can access.
- *      export COCKROACH_MCP_API_KEY="<your-service-account-secret>"
- *      pnpm exec tsx scripts/mcp-verify.ts
- *
- * You can also run a read-only query after verifying:
- *   RECALL_MCP_QUERY="select count(*) from memory" pnpm exec tsx scripts/mcp-verify.ts
+ * You can also run a semantic search after verifying:
+ *   RECALL_MCP_QUERY="who is hiring react engineers" pnpm exec tsx scripts/mcp-verify.ts
  */
 import { loadEnv } from "./load-env";
 loadEnv();
 
-// Prefer Recall's own MCP server when a Recall key is provided.
-const recallKey = process.env.RECALL_MCP_API_KEY;
-const cockKey = process.env.COCKROACH_MCP_API_KEY;
-const token = recallKey ?? cockKey ?? "";
-const ENDPOINT = recallKey
-  ? `${process.env.APP_URL ?? "http://localhost:3000"}/api/mcp`
-  : "https://cockroachlabs.cloud/mcp";
+const token = process.env.RECALL_MCP_API_KEY ?? "";
+const ENDPOINT = `${process.env.APP_URL ?? "http://localhost:3000"}/api/mcp`;
 
 async function mcpFetch(
   sessionId: string | null,
@@ -66,12 +54,9 @@ async function mcpFetch(
 }
 
 async function main() {
-  const token = recallKey ?? cockKey;
   if (!token) {
     console.error(
-      "[mcp] Provide a key to verify.\n" +
-        "  Recall's own MCP:    export RECALL_MCP_API_KEY=\"<your-recall-key>\"\n" +
-        "  CockroachDB Cloud:   export COCKROACH_MCP_API_KEY=\"<your-service-account-secret>\"",
+      '[mcp] Provide a key to verify.\n  export RECALL_MCP_API_KEY="<your-recall-key>" (generate one in the app)',
     );
     process.exit(1);
   }
@@ -88,7 +73,7 @@ async function main() {
       params: {
         protocolVersion: "2025-03-26",
         capabilities: {},
-        clientInfo: { name: "recall-mcp-verify", version: "0.1.0" },
+        clientInfo: { name: "recall-mcp-verify", version: "2.0.0" },
       },
     },
     token,
@@ -108,21 +93,21 @@ async function main() {
   console.log("[mcp] tools available:");
   for (const t of tools) console.log("   -", t.name);
 
-  // 4. optional read-only query
-  const query = process.env.RECALL_MCP_QUERY ?? process.env.COCKROACH_MCP_QUERY;
+  // 4. optional semantic search over the user's Walrus memory
+  const query = process.env.RECALL_MCP_QUERY;
   if (query) {
-    console.log(`[mcp] running read-only query: ${query}`);
+    console.log(`[mcp] search_memories: ${query}`);
     ({ sessionId, result } = await mcpFetch(
       sessionId,
       {
         jsonrpc: "2.0",
         id: 3,
         method: "tools/call",
-        params: { name: "select_query", arguments: { query } },
+        params: { name: "search_memories", arguments: { q: query, limit: 5 } },
       },
       token,
     ));
-    console.log("[mcp] query result:", JSON.stringify(result).slice(0, 500));
+    console.log("[mcp] result:", JSON.stringify(result).slice(0, 800));
   }
 
   console.log("[mcp] connection verified ✔  Now add it to your AI tool (see docs/ops-agent.md).");

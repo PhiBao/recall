@@ -1,14 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query } from "@/lib/db";
 import { authenticateApiKey } from "@/lib/api-keys";
+import {
+  getPerson,
+  getPersonFacts,
+  getPersonMemories,
+  getTodayFeed,
+  listPeople,
+  recall,
+  recentMemories,
+} from "@/lib/memory";
 
 /**
  * Recall's own MCP server — a read-only Model Context Protocol endpoint.
  *
  * A signed-in Recall user generates an API key (in the app), then any MCP
  * client (Claude Code, Cursor, ...) connects here with `Authorization: Bearer
- * <key>` and queries THEIR memory. Every statement is scoped by the key's
+ * <key>` and queries THEIR memory. Every tool is scoped by the key's
  * user_id, so a key can never read another user's data.
+ *
+ * Memory content lives in Walrus Memory (per-user namespace); structure
+ * (people, facts, commitments) lives in the local projection. These tools
+ * read both.
  *
  * Add to Claude Code:
  *   claude mcp add recall http://localhost:3000/api/mcp --transport http \
@@ -33,64 +45,65 @@ interface Tool {
 
 const READ_TOOLS: Tool[] = [
   {
-    name: "list_tables",
-    description:
-      "List the tables in Recall's database (your memory schema).",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "get_table_schema",
-    description: "Get the schema (columns) of a table in Recall's database.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        table: { type: "string", description: "Table name, e.g. memory" },
-      },
-      required: ["table"],
-    },
-  },
-  {
-    name: "select_query",
-    description:
-      "Run a read-only SELECT against Recall's database. Only SELECT (no INSERT/UPDATE/DELETE). Every query is auto-scoped to the authenticated user's data.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "SELECT statement" },
-      },
-      required: ["query"],
-    },
-  },
-  {
     name: "list_people",
-    description: "List all people the user has captured memories about.",
+    description:
+      "List all people the user has captured memories about (name, headline, company).",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "search_memories",
     description:
-      "Search the user's memories by text/name. Returns the matching raw memory rows (the source of truth the product recalls from).",
+      "Semantic search over the user's Walrus-backed memory. Returns matching memories with the person, text, and date. This is the source of truth the product recalls from.",
     inputSchema: {
       type: "object",
       properties: {
-        q: { type: "string", description: "Search terms" },
+        q: { type: "string", description: "Search terms or a question" },
         limit: { type: "number", description: "Max results (default 10)" },
       },
       required: ["q"],
     },
   },
+  {
+    name: "ask_memory",
+    description:
+      "Ask a question about the people the user knows. Returns a grounded answer synthesized ONLY from retrieved Walrus memories, plus citations to the exact memories used.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        question: { type: "string", description: "Question to answer" },
+      },
+      required: ["question"],
+    },
+  },
+  {
+    name: "get_person",
+    description:
+      "Get one person's profile: headline, company, structured facts, and memory timeline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        person_id: { type: "string", description: "Person id from list_people" },
+      },
+      required: ["person_id"],
+    },
+  },
+  {
+    name: "get_today",
+    description:
+      "Get the user's Today feed: open follow-ups that are due or overdue, with a draft reconnect message for each.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "recent_memories",
+    description: "Get the user's most recent memories.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max results (default 10)" },
+      },
+    },
+  },
 ];
-
-const ALLOWED_TABLES = new Set([
-  "app_user",
-  "person",
-  "memory",
-  "memory_embedding",
-  "fact",
-  "commitment",
-  "audit_log",
-  "api_key",
-]);
 
 function mcpError(id: unknown, message: string): Record<string, unknown> {
   return {
@@ -104,6 +117,10 @@ function mcpResult(id: unknown, result: unknown): Record<string, unknown> {
   return { jsonrpc: "2.0", id, result };
 }
 
+function textResult(id: unknown, text: string): Record<string, unknown> {
+  return mcpResult(id, { content: [{ type: "text", text }] });
+}
+
 async function handleCall(
   userId: string,
   id: unknown,
@@ -112,103 +129,84 @@ async function handleCall(
 ): Promise<Record<string, unknown>> {
   try {
     switch (name) {
-      case "list_tables": {
-        const rows = await query<{ table_name: string }>(
-          `SELECT table_name FROM information_schema.tables
-            WHERE table_schema = 'public' ORDER BY table_name`,
-        );
-        return mcpResult(id, {
-          content: [{ type: "text", text: rows.map((r) => r.table_name).join("\n") }],
-        });
-      }
-      case "get_table_schema": {
-        const table = String(args.table ?? "");
-        if (!ALLOWED_TABLES.has(table)) {
-          return mcpError(id, `Unknown table: ${table}`);
-        }
-        const cols = await query<{ column_name: string; data_type: string }>(
-          `SELECT column_name, data_type FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`,
-          [table],
-        );
-        return mcpResult(id, {
-          content: [
-            {
-              type: "text",
-              text: cols.map((c) => `${c.column_name} ${c.data_type}`).join("\n"),
-            },
-          ],
-        });
-      }
-      case "select_query": {
-        const sql = String(args.query ?? "").trim().replace(/;\s*$/, "");
-        if (!/^\s*select\b/i.test(sql)) {
-          return mcpError(id, "Only SELECT statements are allowed (read-only).");
-        }
-        if (/\b(insert|update|delete|drop|alter|create|truncate|grant|copy)\b/i.test(sql)) {
-          return mcpError(id, "Only SELECT statements are allowed (read-only).");
-        }
-        // Force per-user scoping: inject `user_id = $1` into the WHERE clause
-        // (or add one) so a key can never read another user's rows.
-        const whereIdx = /\bwhere\b/i.exec(sql)?.index;
-        const scoped = whereIdx
-          ? `${sql.slice(0, whereIdx)} WHERE user_id = $1 AND ${sql.slice(whereIdx + 5)}`
-          : `${sql} WHERE user_id = $1`;
-        const rows = await query<Record<string, unknown>>(`${scoped} LIMIT 25`, [userId]);
-        const preview = rows.slice(0, 25).map((r) =>
-          JSON.stringify(
-            Object.fromEntries(
-              Object.entries(r).filter(([, v]) => v !== undefined),
-            ),
-          ),
-        );
-        return mcpResult(id, {
-          content: [{ type: "text", text: preview.join("\n") }],
-          meta: { rowCount: rows.length },
-        });
-      }
       case "list_people": {
-        const rows = await query<{ name: string; headline: string | null }>(
-          `SELECT name, headline FROM person WHERE user_id = $1 ORDER BY name`,
-          [userId],
-        );
-        return mcpResult(id, {
-          content: [
-            {
-              type: "text",
-              text:
-                rows.map((r) => `${r.name}${r.headline ? ` — ${r.headline}` : ""}`).join("\n") ||
-                "(no people yet)",
-            },
-          ],
-        });
+        const people = await listPeople(userId);
+        const text =
+          people
+            .map(
+              (p) =>
+                `${p.id} | ${p.name}${p.headline ? ` — ${p.headline}` : ""}${p.company ? ` @ ${p.company}` : ""}`,
+            )
+            .join("\n") || "(no people yet)";
+        return textResult(id, text);
       }
       case "search_memories": {
         const q = String(args.q ?? "").trim();
         const limit = Math.min(Math.max(Number(args.limit ?? 10) || 10, 1), 25);
         if (!q) return mcpError(id, "q is required");
-        const rows = await query<{ person_name: string | null; content: string; occurred_at: string }>(
-          `SELECT p.name AS person_name, m.content, m.occurred_at
-             FROM memory m
-             LEFT JOIN person p ON p.id = m.person_id
-            WHERE m.user_id = $1
-              AND (lower(m.content) LIKE '%' || lower($2) || '%'
-                   OR lower(coalesce(p.name,'')) LIKE '%' || lower($2) || '%')
-            ORDER BY m.occurred_at DESC
-            LIMIT $3`,
-          [userId, q, limit],
+        const res = await recall(userId, q, limit);
+        const text =
+          res.citations
+            .map(
+              (c) =>
+                `${c.personName ?? "note"} (${c.occurredAt}): ${c.snippet} [score ${c.score}${c.verified === "verified" ? ", ✓ verified" : ""}]`,
+            )
+            .join("\n") || "(no matching memories)";
+        return textResult(id, text);
+      }
+      case "ask_memory": {
+        const question = String(args.question ?? "").trim();
+        if (!question) return mcpError(id, "question is required");
+        const res = await recall(userId, question, 6);
+        const cites = res.citations
+          .map((c) => `- ${c.personName ?? "note"}: ${c.snippet}`)
+          .join("\n");
+        return textResult(
+          id,
+          `${res.answer}${cites ? `\n\nSources:\n${cites}` : ""}`,
         );
-        return mcpResult(id, {
-          content: [
-            {
-              type: "text",
-              text:
-                rows
-                  .map((r) => `${r.person_name ?? "note"} (${r.occurred_at}): ${r.content}`)
-                  .join("\n") || "(no matching memories)",
-            },
-          ],
-        });
+      }
+      case "get_person": {
+        const personId = String(args.person_id ?? "");
+        if (!personId) return mcpError(id, "person_id is required");
+        const person = await getPerson(userId, personId);
+        if (!person) return mcpError(id, "Person not found");
+        const [facts, memories] = await Promise.all([
+          getPersonFacts(userId, personId),
+          getPersonMemories(userId, personId),
+        ]);
+        const header = `${person.name}${person.headline ? ` — ${person.headline}` : ""}${person.company ? ` @ ${person.company}` : ""}${person.location ? ` (${person.location})` : ""}`;
+        const factLines =
+          facts.map((f) => `  - ${f.attribute}: ${f.value}`).join("\n") || "  (none)";
+        const memLines =
+          memories
+            .slice(0, 10)
+            .map((m) => `  - [${m.occurred_at}] ${m.content}`)
+            .join("\n") || "  (none)";
+        return textResult(
+          id,
+          `${header}\nFacts:\n${factLines}\nMemories:\n${memLines}`,
+        );
+      }
+      case "get_today": {
+        const feed = await getTodayFeed(userId);
+        const text =
+          feed
+            .map(
+              (item) =>
+                `- [${item.reason}] ${item.personName ?? "someone"}: ${item.commitment.description} → draft: "${item.draftMessage ?? ""}"`,
+            )
+            .join("\n") || "(nothing due)";
+        return textResult(id, text);
+      }
+      case "recent_memories": {
+        const limit = Math.min(Math.max(Number(args.limit ?? 10) || 10, 1), 25);
+        const rows = await recentMemories(userId, limit);
+        const text =
+          rows
+            .map((r) => `${r.person_name ?? "note"} (${r.occurred_at}): ${r.content}`)
+            .join("\n") || "(no memories yet)";
+        return textResult(id, text);
       }
       default:
         return mcpError(id, `Unknown tool: ${name}`);
@@ -249,7 +247,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         result: {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: {} },
-          serverInfo: { name: "recall-mcp", version: "1.0.0" },
+          serverInfo: { name: "recall-mcp", version: "2.0.0" },
         },
       },
       { headers: { "mcp-session-id": crypto.randomUUID() } },
