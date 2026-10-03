@@ -172,6 +172,10 @@ export async function captureMemory(
       const { blobId } = await walrusAwaitBlob(jobId);
       if (blobId) {
         setMemoryBlob(memory.id, blobId);
+        // Also reflect it on the object we returned. Without this, any caller
+        // holding the CaptureResult sees walrus_blob_id === null forever — it
+        // reads a different snapshot than the one the backfill updated.
+        memory.walrus_blob_id = blobId;
         audit(userId, "capture_certified", { memoryId: memory.id, walrusBlobId: blobId });
       }
     } catch {

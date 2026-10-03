@@ -58,6 +58,11 @@ said lives in Walrus:
   0–1 scores, sub-threshold pools **abstain without a synthesis call**, and
   every shown citation carries a machine-checked verdict (✓ verified,
   contradicted hidden).
+- **Recovery** (`pnpm memwal:durability`): the relayer's index is rebuildable
+  from Walrus alone via `restore()`, and semantic recall still answers **with
+  the local projection deleted** — because the memories were never in the app.
+  Storage runs 50 epochs (≈ 2 years, 2-week epochs), reported by `/api/health`
+  rather than left to a question.
 - **Multi-tenant isolation** (`lib/memwal.ts`): one operator MemWalAccount
   pays for storage (no per-user funding); each app user gets a deterministic
   namespace. Recall is scoped per account + namespace; the delegate key never
@@ -81,6 +86,21 @@ auto-scoped by user): `list_people`, `search_memories`, `ask_memory`,
 `get_person`, `get_today`, `recent_memories`. See
 **[docs/ops-agent.md](docs/ops-agent.md)** for the exact steps, per-tool
 configs, and example prompts.
+
+### Your agent reads the same blobs — no export
+
+Because the memories *are* Walrus blobs, an agent connected to **Walrus
+Memory's own MCP server** (first-party `memwal_recall` / `memwal_remember`
+tools) recalls everything typed into the web app, with **zero re-entry**:
+
+```bash
+claude plugin marketplace add https://github.com/MystenLabs/MemWal.git
+claude plugin install memwal@memwal-plugins -s user
+```
+
+Then: capture someone in the browser, and in Claude Code ask *"Who did I met
+that's hiring React engineers?"* — same encrypted blob, different client.
+That is the portability claim, demonstrated rather than asserted.
 
 ### Calibrated judgments: Jev decides, Voxtral writes
 
@@ -145,6 +165,8 @@ lib/
   env.ts                 Zod-validated, fail-fast config (no DB, no IAM)
 scripts/
   verify-memwal.ts       Prove the Walrus round-trip (pnpm memwal:verify)
+  verify-durability.ts   Prove memory outlives the app (pnpm memwal:durability)
+  verify-e2e.ts          25-check product-path verifier (pnpm verify:e2e)
   verify-judge.ts        Prove the judgments live (pnpm judge:verify)
   seed.ts                Seed demo memories (pnpm seed — real Walrus blobs)
   run-nudges.ts          Daily reconnect nudges (pnpm nudge:run)
@@ -178,10 +200,17 @@ cp .env.example .env.local
 ### 3. Install, init, prove, seed
 ```bash
 pnpm install
-pnpm store:init       # ensure the local projection file exists
-pnpm memwal:verify    # prove the Walrus round-trip (health → blob → recall)
-pnpm judge:verify     # prove the judgments live (route → resolve → rank → verify)
-pnpm seed             # optional: demo user with realistic memories (real blobs)
+pnpm store:init         # ensure the local projection file exists
+pnpm memwal:verify      # prove the Walrus round-trip (health → blob → recall)
+pnpm judge:verify       # prove the judgments live (route → resolve → rank → verify)
+pnpm seed               # optional: demo user with realistic memories (real blobs)
+```
+
+### 3b. Prove the whole thing (before you demo it)
+```bash
+pnpm verify             # typecheck + unit tests + verify:e2e + memwal:durability
+pnpm verify:e2e         # 25 checks: capture structure, cited recall, abstention, isolation
+pnpm memwal:durability  # blobs owned on Sui; recall survives losing the local index
 ```
 
 ### 4. Run

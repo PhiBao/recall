@@ -75,6 +75,40 @@ export async function captureAction(
   }
 }
 
+/**
+ * Load the eight demo stories through the real capture pipeline.
+ *
+ * Each one is a genuine capture: Bedrock extraction, Jev judgments, and an
+ * encrypted blob on Walrus mainnet under this user's namespace. Guarded so it
+ * only runs for an account with nothing to show yet.
+ */
+export async function seedDemoAction(): Promise<
+  | { ok: true; captured: number; people: number; blobs: number }
+  | { ok: false; error: string }
+> {
+  const userId = await requireUserId();
+  try {
+    if (!userActionLimiter.check(userId)) {
+      return { ok: false, error: "Slow down — try the demo again in a moment." };
+    }
+    const { recentMemories } = await import("@/lib/memory");
+    if ((await recentMemories(userId, 1)).length > 0) {
+      return { ok: false, error: "You already have memories — nothing to load." };
+    }
+    const { seedDemoMemories } = await import("@/lib/demo-stories");
+    const res = await seedDemoMemories(userId);
+    log.info("seed_demo", { userId, ...res });
+    revalidatePath("/workspace");
+    return { ok: true, ...res };
+  } catch (err) {
+    log.error("seed_demo_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { ok: false, error: "Could not load the demo. Try again." };
+  }
+}
+
 const recallSchema = z.string().min(1).max(4000);
 
 export async function routeAction(

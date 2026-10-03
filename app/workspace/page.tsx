@@ -12,6 +12,7 @@ import { Composer } from "@/components/Composer";
 import { TodayCard } from "@/components/TodayCard";
 import { ApiKeysPanel } from "@/components/ApiKeysPanel";
 import { BlobChip } from "@/components/BlobChip";
+import { DemoLoader } from "@/components/DemoLoader";
 
 export default async function AppPage() {
   const user = await getCurrentUser();
@@ -53,6 +54,12 @@ export default async function AppPage() {
           </div>
 
           <Composer hasPeople={people.length > 0} />
+
+          {recent.length === 0 && (
+            <div className="mt-4">
+              <DemoLoader />
+            </div>
+          )}
 
           {recent.length > 0 && (
             <div className="mt-8">

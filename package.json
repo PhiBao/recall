@@ -17,7 +17,10 @@
     "seed": "tsx scripts/seed.ts",
     "nudge:run": "tsx scripts/run-nudges.ts",
     "memwal:verify": "tsx scripts/verify-memwal.ts",
+    "memwal:durability": "tsx scripts/verify-durability.ts",
     "judge:verify": "tsx scripts/verify-judge.ts",
+    "verify:e2e": "tsx scripts/verify-e2e.ts",
+    "verify": "pnpm typecheck && pnpm test && pnpm verify:e2e && pnpm memwal:durability",
     "mcp:verify": "tsx scripts/mcp-verify.ts"
   },
   "dependencies": {
