@@ -79,25 +79,34 @@ export function shortBlobId(blobId: string): string {
 }
 
 /**
- * Fast path: submit a memory and return the job id immediately (~500ms)
- * without waiting for certification. Pair with walrusAwaitBlob() — in a
- * request handler, hand the wait to after() so the user never blocks on it.
+ * Fast path: submit a memory and return the job id immediately (~1s) without
+ * waiting for certification. Pair with walrusAwaitBlob() — in a request
+ * handler, hand the wait to after() so the user never blocks on it.
+ *
+ * Retries once on failure: the relayer rate-limits per account (a burst of
+ * demo captures can trip it), and silently losing a blob to a transient
+ * rejection is exactly the kind of degradation this product must not have.
  */
 export async function walrusRememberAsync(
   userId: string,
   text: string,
-): Promise<{ jobId: string | null }> {
+): Promise<{ jobId: string | null; attempts: number }> {
   const c = getClient();
-  if (!c) return { jobId: null };
-  try {
-    const accepted = await c.remember(text, userNamespace(userId));
-    return { jobId: accepted.job_id ?? null };
-  } catch (err) {
-    log.warn("walrus_remember_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { jobId: null };
+  if (!c) return { jobId: null, attempts: 0 };
+  let attempts = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    attempts++;
+    try {
+      const accepted = await c.remember(text, userNamespace(userId));
+      if (attempt > 0) log.info("walrus_remember_recovered", { attempts });
+      return { jobId: accepted.job_id ?? null, attempts };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn("walrus_remember_attempt_failed", { attempt, error: message });
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
+    }
   }
+  return { jobId: null, attempts };
 }
 
 /** Wait for an accepted remember job to certify; null when it fails. */

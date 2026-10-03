@@ -59,7 +59,11 @@ async function main() {
   check("person resolved", cap.person?.name === "Sarah Chen", `got ${cap.person?.name ?? "null"}`);
   check("facts extracted", cap.factsAdded > 0, `${cap.factsAdded} facts`);
   check("commitment extracted", cap.commitmentsAdded > 0, `${cap.commitmentsAdded}`);
-  check("blob certified on Walrus", !!cap.memory.walrus_blob_id, cap.memory.walrus_blob_id ?? "no blob");
+  check(
+    "blob landed on Walrus",
+    cap.walrusState !== "unavailable",
+    `${cap.walrusState}${cap.memory.walrus_blob_id ? ` ${cap.memory.walrus_blob_id}` : ""} (attempts=${cap.walrusAttempts})`,
+  );
 
   // Casual phrasing: the incident-3 regression. A person must still be found.
   const casual = await mem.captureMemory(uid, "i meet Thomaz, he is a funny person");

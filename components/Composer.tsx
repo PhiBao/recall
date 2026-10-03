@@ -19,6 +19,7 @@ interface Entry {
     confidence: number | null;
     facts: number;
     commitments: number;
+    walrusState: "certified" | "pending" | "unavailable";
   };
 }
 
@@ -80,6 +81,7 @@ export function Composer({ hasPeople }: { hasPeople: boolean }) {
                 confidence: res.personConfidence,
                 facts: res.factsAdded,
                 commitments: res.commitmentsAdded,
+                walrusState: res.walrusState,
               },
             },
           ]);
@@ -228,8 +230,19 @@ function ThreadEntry({ entry }: { entry: Entry }) {
             {entry.provenance.facts} fact
             {entry.provenance.facts === 1 ? "" : "s"} ·{" "}
             {entry.provenance.commitments} follow-up
-            {entry.provenance.commitments === 1 ? "" : "s"} → encrypted blob on
-            Walrus
+            {entry.provenance.commitments === 1 ? "" : "s"} ·{" "}
+            {entry.provenance.walrusState === "certified" ? (
+              <span className="text-accent/80">⬡ encrypted on Walrus</span>
+            ) : entry.provenance.walrusState === "pending" ? (
+              <span className="text-ink/30">⬡ certifying on Walrus…</span>
+            ) : (
+              <span
+                className="text-accent/70"
+                title="The relayer did not accept this write (it rate-limits bursts). Your memory is safe locally and goes to Walrus on the next capture."
+              >
+                ⬡ Walrus write queued — saved locally
+              </span>
+            )}
           </p>
         )}
         {entry.answer && entry.answer.citations.length > 0 && (

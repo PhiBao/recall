@@ -65,8 +65,18 @@ export interface CaptureResult {
   personConfidence: number | null;
   /** True when Jev asserted the memory is about nobody in particular. */
   personDeclined: boolean;
-  /** True when the enriched record has been certified as a Walrus blob. */
-  walrusCertified: boolean;
+  /**
+   * Where the enriched record stands on Walrus.
+   *  - "certified"   blob uploaded and certified on-chain
+   *  - "pending"     accepted by the relayer, certification still in flight
+   *  - "unavailable" the write did not land; the memory is still safe locally
+   *                  and will be re-sent on the next capture
+   * Never claim "certified" without a blob id — an honest status line is worth
+   * more than a reassuring one.
+   */
+  walrusState: "certified" | "pending" | "unavailable";
+  /** Number of remember attempts made (1 = accepted first time). */
+  walrusAttempts: number;
 }
 
 /** The text actually persisted to Walrus: raw memory + its structured reading. */
@@ -161,7 +171,10 @@ export async function captureMemory(
 
   // 2. Submit to Walrus (fast accept), then store the raw memory immediately
   // so the user never waits on certification.
-  const { jobId } = await walrusRememberAsync(userId, buildWalrusText(text, extracted));
+  const { jobId, attempts: walrusAttempts } = await walrusRememberAsync(
+    userId,
+    buildWalrusText(text, extracted),
+  );
 
   // 3. Store the raw memory (source of truth for the UI).
   const memory = addMemory({
@@ -246,7 +259,12 @@ export async function captureMemory(
     personSource,
     personConfidence: picked?.confidence ?? null,
     personDeclined: person === null,
-    walrusCertified: !!memory.walrus_blob_id,
+    walrusState: memory.walrus_blob_id
+      ? "certified"
+      : jobId
+        ? "pending"
+        : "unavailable",
+    walrusAttempts,
   };
 }
 
