@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { env, isMockAI } from "./env";
+import { findPersonSpans } from "./judge";
 import type { ExtractedMemory, MemoryKind } from "./types";
 
 /**
@@ -202,41 +203,49 @@ export async function synthesizeRecall(
 // --- Deterministic mock implementations (local dev / no AWS) ---------------
 
 function mockExtract(text: string): ExtractedMemory {
-  // Optional honorific (Dr./Mr./Ms./Mrs./Prof.) + one or two capitalized names.
-  // Supports accented letters (e.g. "Tomás Silva").
-  const NAME = "((?:Dr\\.?|Mr\\.?|Ms\\.?|Mrs\\.?|Prof\\.?)?\\s*[A-ZÀ-Ý][a-zà-ÿ]+(?:\\s+[A-ZÀ-Ý][a-zà-ÿ]+)?)";
-  const nameMatch =
-    // "Met/Coffee with/Call with/Dinner with/DM'd with/Ran into/Talked to X"
-    text.match(
-      new RegExp(
-        `\\b(?:met(?:\\s+with)?|met with|talked to|spoke with|call with|coffee with|dinner with|lunch with|meeting with|dm'?d with|ran into|caught up with|introduced to|chatted with)\\s+${NAME}`,
-        "i",
-      ),
-    ) ??
-    // "X is/works/said/mentioned/runs/leads…"
-    text.match(
-      new RegExp(`\\b${NAME}\\s+(?:is|was|works|said|mentioned|runs|leads|founded|started)`),
-    );
-  const personName = nameMatch?.[1]?.replace(/\s+/g, " ").trim() ?? null;
+  // Single source of truth for name candidates: the same over-finding
+  // pre-parser Jev sees (lib/judge.ts). Previously this used its own narrow
+  // regex, so the no-credentials fallback dropped people the production path
+  // keeps — the two paths must agree.
+  const spans = findPersonSpans(text);
+  // Longest span is the best guess offline (full names beat surnames). In
+  // production Jev makes this call; this is the no-credentials fallback.
+  const personName =
+    spans.length > 0
+      ? spans.reduce((a, b) => (b.length > a.length ? b : a))
+      : null;
 
   const companyMatch = text.match(/\b(?:at|@)\s+([A-Z][A-Za-z0-9&.\- ]{1,30})/);
-  const kind: MemoryKind = /\bcall\b/i.test(text)
-    ? "call"
-    : /\bmet|meeting\b/i.test(text)
-      ? "meeting"
-      : /\b(dm|message|texted|emailed)\b/i.test(text)
-        ? "message"
-        : "note";
+  const kind: MemoryKind =
+    /\bcall(?:ed)?\b|\bphone\b/i.test(text)
+      ? "call"
+      : /\b(met|meet|meeting|saw|lunch|dinner|coffee|hang|grabbed)\b/i.test(text)
+        ? "meeting"
+        : /\b(dm|dmd|texted|messaged|emailed|pinged)\b/i.test(text)
+          ? "message"
+          : "note";
 
   const facts: { attribute: string; value: string }[] = [];
-  const hiring = text.match(/hiring\s+(?:for\s+)?([A-Za-z0-9 ,\-]{3,40})/i);
+  const hiring = text.match(
+    /\b(?:hiring|recruiting|looking for)(?:\s+for)?\s+([A-Za-z0-9 ,\-]{3,40})/i,
+  );
   if (hiring?.[1]) facts.push({ attribute: "hiring_for", value: hiring[1].trim() });
-  const interest = text.match(/(?:into|interested in|likes|loves)\s+([A-Za-z0-9 ,\-]{3,40})/i);
+  const interest = text.match(
+    /(?:into|interested in|likes|loves|into)\s+([A-Za-z0-9 ,\-]{3,40})/i,
+  );
   if (interest?.[1]) facts.push({ attribute: "interest", value: interest[1].trim() });
 
   const commitments: { description: string; dueInDays: number | null }[] = [];
-  const promise = text.match(/(?:promised|said i'?d|need to|should|will|follow up)\s+([A-Za-z0-9 ,'\-]{4,60})/i);
-  if (promise?.[1]) commitments.push({ description: promise[1].trim(), dueInDays: 3 });
+  const promise = text.match(
+    /(?:promised?|said i'?d|need to|should|will|must|owe|follow up|intro)\s+([A-Za-z0-9 ,'\-]{4,60})/i,
+  );
+  if (promise?.[1]) {
+    const desc = promise[1].trim();
+    // Don't create a follow-up that just echoes the person name.
+    if (desc && desc.toLowerCase() !== (personName ?? "").toLowerCase()) {
+      commitments.push({ description: desc, dueInDays: 3 });
+    }
+  }
 
   const company = companyMatch?.[1]?.trim() ?? null;
   return {

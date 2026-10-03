@@ -102,54 +102,141 @@ export const NO_MATCH = "none_of_these";
 const NAME_CORE = "[A-ZÀ-Ý][a-zà-ÿ]+(?:\\s+[A-ZÀ-Ý][a-zà-ÿ]+)?";
 const HONORIFIC = "(?:Dr\\.?|Mr\\.?|Ms\\.?|Mrs\\.?|Prof\\.?)\\s+";
 
-/** Sentence starters that look like names but never are. */
-const NAME_STOPLIST = new Set(
-  "met coffee call dinner lunch meeting ran had talked spoke dm caught introduced chatted phone zoom email text the a an my i we they he she it this that what who when where how why just today yesterday tomorrow promisetold said".toLowerCase().split(/\s+/),
-);
+/**
+ * Words that are capitalized by position or convention but are never a person.
+ * Deliberately broad: over-filling candidates is free (Jev picks), while a
+ * missing candidate silently drops the whole relationship record.
+ */
+const NAME_STOPLIST = new Set([
+  // pronouns / determiners / interjections
+  "i", "im", "ive", "id", "ill", "a", "an", "the", "my", "our", "we", "us", "me",
+  "you", "your", "yours", "he", "she", "it", "they", "them", "their", "his", "her",
+  "this", "that", "these", "those", "there", "here", "what", "who", "whom", "whose",
+  "when", "where", "why", "how", "which", "and", "but", "or", "so", "if", "then",
+  "just", "also", "very", "really", "still", "now", "today", "yesterday", "tomorrow",
+  "tonight", "later", "soon", "again", "well", "yeah", "yes", "no", "ok", "okay",
+  "hey", "hi", "hello", "thanks", "thank", "please", "sorry", "sure", "cool", "nice",
+  // time / quantifiers / misc capitalized in notes
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "january", "february", "march", "april", "may", "june", "july", "august",
+  "september", "october", "november", "december", "am", "pm", "monday",
+  // interaction verbs that get capitalized after a sentence break
+  "met", "meet", "meeting", "saw", "see", "seen", "talked", "talk", "spoke", "speak",
+  "called", "call", "coffee", "lunch", "lunches", "dinner", "dinners", "breakfast",
+  "ran", "run", "running", "grabbed", "grab", "hung", "caught", "catch", "chatted",
+  "chat", "introduced", "intro", "emailed", "email", "dmed", "dm", "texted", "text",
+  "messaged", "pinged", "followed", "follow", "connected", "connected", "introed",
+  "hangout", "hang", "sync", "standup", "demo", "onboard", "interview", "hired",
+  "hiring", "promised", "promote", "todo", "note", "notes", "quick", "update",
+  "followup", "follow-up", "reminder", "nudge", "nudges", "lessons", "idea", "ideas",
+  // filler particles that follow "w/" and similar
+  "up", "out", "off", "over", "back", "down", "away", "in", "on", "at", "to", "of",
+  "for", "with", "about", "from", "by", "as", "is", "was", "are", "were", "be",
+  "am", "im", "dont", "doesnt", "didnt", "cant", "wont", "isnt", "arent", "wasnt",
+  "got", "get", "gets", "getting", "went", "going", "gone", "came", "coming",
+  "wanna", "gonna", "lemme", "lets", "let", "us", "ur", "pls", "plz", "thx", "asap",
+  // auxiliaries / very common sentence-initial verbs (capitalized after ". " or
+  // at the start of a quick note, but never a person)
+  "had", "have", "has", "having", "been", "being", "does", "did", "doing",
+  "can", "could", "will", "would", "should", "shall", "may", "might", "must",
+  "need", "needs", "needed", "want", "wants", "wanted", "make", "makes", "made",
+  "take", "takes", "took", "give", "gives", "gave", "find", "finds", "found",
+  "think", "thinks", "thought", "know", "knows", "knew", "seem", "seems",
+  "feel", "feels", "felt", "keep", "keeps", "kept", "put", "puts", "try",
+  "tries", "tried", "ask", "asks", "asked", "seem", "help", "helps", "helped",
+  "met", "meet", "meeting", "saw", "see", "heard", "hear", "told", "tell",
+  "spent", "spend", "left", "leave", "lost", "lose", "won", "win", "bought",
+  "buy", "sold", "sell", "built", "build", "sent", "send", "read", "write",
+  "wrote", "woken", "worked", "works", "working", "looking", "look", "looked",
+  "trying", "use", "used", "using", "need", "needs", "wanted", "thanks",
+].map((w) => w.toLowerCase()));
 
 /**
- * Code-side candidate finder: recall-tuned name-span detection, deduped, in
- * document order. Over-finds on purpose — Jev picks the right one.
+ * Interaction verbs, matched case-insensitively by writing explicit character
+ * classes instead of using the /i flag. Reason: NAME_CORE appears inside the
+ * same pattern and MUST stay case-sensitive — with /i, "saw Priya today"
+ * captured "Priya today" as a single span, which corrupts the copied value.
+ */
+const INTERACTION_VERBS = [
+  "[Mm][Ee][Tt]", "[Mm][Ee][Tt]ing with", "[Ss][Aa][Ww]", "[Ss][Ee][Ee]",
+  "[Gg][Rr][Aa][Bb][Bb]?[Ee][Dd] coffee", "[Cc][Oo][Ff][Ff][Ee][Ee] with",
+  "[Ll][Uu][Nn][Cc][Hh](?:[Ee][Dd])? with", "[Dd][Ii][Nn][Nn][Ee][Rr](?:[Ee][Dd])? with",
+  "[Hh][Aa][Nn][Gg](?:[Ii][Nn][Gg])? out with", "[Hh][Uu][Nn][Gg] out with",
+  "[Rr][Aa][Nn] into", "[Tt][Aa][Ll][Kk][Ee][Dd] to",
+  "[Ss][Pp][Oo][Kk][Ee] (?:to|with)", "[Cc][Hh][Aa][Tt][Tt][Ee][Dd] (?:to|with)",
+  "[Cc][Aa][Uu][Gg][Hh][Tt] up with", "[Ii][Nn][Tt][Rr][Oo][Dd][Uu][Cc][Ee][Dd] to",
+  "[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ee][Dd] with", "[Dd][Mm]'?[Dd]",
+  "[Ee][Mm][Aa][Ii][Ll][Ee][Dd]", "[Cc][Aa][Ll][Ll][Ee][Dd]",
+  "[Tt][Ee][Xx][Tt][Ee][Dd]", "[Mm][Ee][Ss][Ss][Aa][Gg][Ee][Dd]", "[Pp][Ii][Nn][Gg][Ee][Dd]",
+].join("|");
+
+/** A token that is a name-ish candidate: 2+ letters, not a stopword, not a number. */
+function isCandidateToken(token: string): boolean {
+  const bare = token.replace(/[^\p{L}\s'-]/gu, "").trim();
+  if (bare.length < 2) return false;
+  if (/^\d+$/.test(bare)) return false;
+  return !NAME_STOPLIST.has(bare.toLowerCase());
+}
+
+/**
+ * Code-side candidate finder for the Jev person-resolution question.
+ *
+ * Design: **over-find, never gate.** A false positive costs one wasted option;
+ * a false negative silently drops the person's facts, commitments and profile
+ * (observed in production). So this returns every plausible name-ish span —
+ * honorific-prefixed runs, capitalized runs of 1-3 tokens, and verb-adjacent
+ * spans — and lets Jev choose among them (the pre-parsed value-extraction
+ * pattern: the model selects, code copies verbatim).
  */
 export function findPersonSpans(text: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const push = (raw: string | undefined) => {
-    const span = (raw ?? "").replace(/\s+/g, " ").trim();
+    let span = (raw ?? "").replace(/\s+/g, " ").trim().replace(/^[-–—,:;.!?]+\s*/, "");
+    // Strip a leading honorific out of the span but remember it for context.
     if (!span) return;
     const key = span.toLowerCase();
     if (seen.has(key)) return;
-    const first = span.split(" ")[0]?.toLowerCase() ?? "";
-    if (NAME_STOPLIST.has(first)) return;
-    seen.add(key);
+    const words = span.split(" ").filter(Boolean);
+    // Drop stopwords from the FRONT only ("up w/ Dr. Lena" -> "Dr. Lena Ortiz").
+    while (words.length > 1 && !isCandidateToken(words[0] as string)) words.shift();
+    if (words.length === 0) return;
+    span = words.join(" ");
+    if (!isCandidateToken(span)) return;
+    const finalKey = span.toLowerCase();
+    if (seen.has(finalKey)) return;
+    seen.add(finalKey);
     out.push(span);
   };
 
-  // High precision: verb contexts ("Met X", "Coffee with X", "Ran into X").
+  // 1. Interaction verbs (informal variants included — "met up w/", "saw").
   const verbRe = new RegExp(
-    `\\b(?:met(?:\\s+with)?|talked to|spoke with|call with|coffee with|dinner with|lunch with|meeting with|dm'?d with|ran into|caught up with|introduced to|chatted with)\\s+((?:${HONORIFIC})?${NAME_CORE})`,
-    "gi",
+    `\\b(?:${INTERACTION_VERBS})\\s+(?:up\\s+with\\s+|out\\s+with\\s+|w/\\s*)?((?:${HONORIFIC})?${NAME_CORE})`,
+    "g",
   );
   for (const m of text.matchAll(verbRe)) push(m[1]);
 
-  // "X is/works/said/…" subjects.
+  // 2. Honorific is a strong signal even without a verb: "Dr. Lena Ortiz called".
+  const honorificRe = new RegExp(`(${HONORIFIC}${NAME_CORE})`, "g");
+  for (const m of text.matchAll(honorificRe)) push(m[1]);
+
+  // 3. "X is / works / runs / said / …" subjects (up to two tokens so that
+  //    "Tomás Silva runs" yields "Tomás Silva", not just "Silva").
   const subjRe = new RegExp(
-    `\\b((?:${HONORIFIC})?${NAME_CORE})\\s+(?:is|was|works|said|mentioned|runs|leads|founded|started)`,
+    `\\b((?:${HONORIFIC})?[A-ZÀ-Ý][a-zà-ÿ]+(?:\\s+[A-ZÀ-Ý][a-zà-ÿ]+)?)\\s+(?:is|was|works?|said|mentioned|runs?|leads?|founded|started|joined|left|owns?|builds?|wants?|prefers?|hiring|needs?)`,
     "g",
   );
   for (const m of text.matchAll(subjRe)) push(m[1]);
 
-  // Extra recall: capitalized bigrams anywhere (skip sentence-initial word).
-  const biRe = new RegExp(`\\b${NAME_CORE}\\b`, "g");
-  for (const m of text.matchAll(biRe)) {
-    const span = m[0];
-    if (!span.includes(" ")) continue;
-    const idx = m.index ?? 0;
-    // Skip if it starts the text or follows a sentence boundary.
-    const before = text.slice(Math.max(0, idx - 3), idx);
-    if (idx === 0 || /[.!?]\s*$/.test(before)) continue;
-    push(span);
-  }
+  // 4. Recall net: ANY capitalized token or capitalized run (1-3 tokens).
+  //    Sentence-initial single tokens are kept too — Jev decides; over-finding
+  //    is cheap, and "Priya today - she's hiring" starts with a name.
+  const runRe = new RegExp(
+    `[A-ZÀ-Ý][a-zà-ÿ]+(?:\\s+(?:van|von|de|del|da|di|bin|al)?\\s*[A-ZÀ-Ý][a-zà-ÿ]+){0,2}`,
+    "g",
+  );
+  for (const m of text.matchAll(runRe)) push(m[0]);
+
   return out;
 }
 
