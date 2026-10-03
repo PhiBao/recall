@@ -49,6 +49,9 @@ function commandFor(tool: ToolKey, key: string): string {
   }
 }
 
+const NATIVE_MCP_SNIPPET = `claude plugin marketplace add https://github.com/MystenLabs/MemWal.git
+claude plugin install memwal@memwal-plugins -s user`;
+
 function humanStepsFor(tool: ToolKey): string[] {
   switch (tool) {
     case "claude":
@@ -261,6 +264,44 @@ export function ConnectGuide({
           Your key only ever reads <em>your</em> memories. It can&apos;t change
           anything, and you can revoke it anytime in the workspace.
         </footer>
+
+        {/* The stronger path: Walrus Memory's own MCP tools */}
+        <section className="mt-10">
+          <StepBadge n={5} title="Or: read the same memories with Walrus Memory’s own tools" />
+          <p className="mt-2 text-sm text-ink/70">
+            Your memories are encrypted blobs on Walrus — not rows in our
+            database. So any agent with Walrus Memory&apos;s native MCP server
+            can recall exactly what you typed here, with nothing to export or
+            paste.
+          </p>
+          <pre className="mt-3 overflow-x-auto rounded-xl border border-ink/10 bg-ink p-4 text-xs leading-relaxed text-paper">
+            <code>{NATIVE_MCP_SNIPPET}</code>
+          </pre>
+          <ol className="mt-4 space-y-1.5 text-sm text-ink/70">
+            {[
+              "Run the two commands above in your terminal.",
+              "Restart Claude Code, then ask it to run “memwal_login” and open the link it prints (use the wallet that owns this account).",
+              "Capture someone here in the browser, then ask: “who did I meet that’s hiring React engineers?”",
+            ].map((s, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="text-accent">{i + 1}.</span>
+                <span>{s}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-3 text-xs text-ink/50">
+            Same encrypted blob, different client. That is what &quot;portable
+            memory&quot; means. Full guide:{" "}
+            <a
+              className="font-medium text-accent hover:underline"
+              href="https://docs.wal.app/walrus-memory/mcp/overview"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Walrus Memory MCP docs
+            </a>
+          </p>
+        </section>
       </div>
     </main>
   );

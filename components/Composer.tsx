@@ -12,6 +12,14 @@ interface Entry {
   role: "user" | "recall";
   text: string;
   answer?: RecallAnswer;
+  /** Decision provenance, shown so the judgment layer is visible not claimed. */
+  provenance?: {
+    person: string | null;
+    source: string;
+    confidence: number | null;
+    facts: number;
+    commitments: number;
+  };
 }
 
 /**
@@ -62,7 +70,18 @@ export function Composer({ hasPeople }: { hasPeople: boolean }) {
         if (res.ok) {
           setThread((t) => [
             ...t,
-            { id: crypto.randomUUID(), role: "recall", text: res.summary },
+            {
+              id: crypto.randomUUID(),
+              role: "recall",
+              text: res.summary,
+              provenance: {
+                person: res.person,
+                source: res.personSource,
+                confidence: res.personConfidence,
+                facts: res.factsAdded,
+                commitments: res.commitmentsAdded,
+              },
+            },
           ]);
         } else {
           setError(res.error);
@@ -187,6 +206,32 @@ function ThreadEntry({ entry }: { entry: Entry }) {
         <div className="rounded-2xl rounded-bl-sm bg-accent/10 px-4 py-2 text-sm text-ink">
           {entry.text}
         </div>
+        {entry.provenance && (
+          <p
+            className="pl-1 text-[11px] text-ink/40"
+            title="How this capture was decided: who resolved the person, and with what confidence."
+          >
+            {entry.provenance.person ? (
+              <>
+                person resolved by{" "}
+                <span className="font-medium text-ink/60">
+                  {entry.provenance.source === "jev" ? "Jev" : "Bedrock"}
+                  {entry.provenance.source === "jev" &&
+                    entry.provenance.confidence !== null &&
+                    ` ${entry.provenance.confidence.toFixed(2)}`}
+                </span>
+                {" · "}
+              </>
+            ) : (
+              <>no person matched{" · "}</>
+            )}
+            {entry.provenance.facts} fact
+            {entry.provenance.facts === 1 ? "" : "s"} ·{" "}
+            {entry.provenance.commitments} follow-up
+            {entry.provenance.commitments === 1 ? "" : "s"} → encrypted blob on
+            Walrus
+          </p>
+        )}
         {entry.answer && entry.answer.citations.length > 0 && (
           <div className="space-y-1 pl-1">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-ink/40">

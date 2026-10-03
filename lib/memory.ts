@@ -59,6 +59,14 @@ export interface CaptureResult {
   factsAdded: number;
   commitmentsAdded: number;
   summary: string;
+  /** Who resolved the person's identity: "jev" (calibrated) or "bedrock". */
+  personSource: string;
+  /** Jev's confidence in that identity, when it was used. */
+  personConfidence: number | null;
+  /** True when Jev asserted the memory is about nobody in particular. */
+  personDeclined: boolean;
+  /** True when the enriched record has been certified as a Walrus blob. */
+  walrusCertified: boolean;
 }
 
 /** The text actually persisted to Walrus: raw memory + its structured reading. */
@@ -114,30 +122,30 @@ export async function captureMemory(
   const text = rawText.trim().slice(0, MAX_INPUT_CHARS);
   if (!text) throw new Error("Empty memory");
 
-  const extracted = await extractMemory(text);
+  // Generation and decision run CONCURRENTLY: Bedrock extracts structure while
+  // Jev resolves identity from code-pre-parsed candidates. Jev's candidates are
+  // the roster plus name-like spans — never dependent on Bedrock's output, so
+  // there is no reason to serialize them.
+  const spans = findPersonSpans(text);
+  const roster = storeListPeople(userId).map((p) => p.name);
+  const judgePromise = isJudgeConfigured()
+    ? resolvePersonName(text, [...roster, ...spans])
+    : Promise.resolve(null);
 
-  // 1. Resolve the person: Bedrock proposes structure, Jev disposes identity.
-  //    Candidates are pre-parsed by code (roster + detected spans), so the
-  //    answer is always a verbatim span — Jev cannot invent a name, and it
-  //    will not pick someone merely mentioned for an intro (the Ravi/David
-  //    class of mistake). Falls back to Bedrock's proposal when Jev is
-  //    unconfigured, fails, or answers "none" with low confidence.
+  const [extracted, picked] = await Promise.all([extractMemory(text), judgePromise]);
+
+  // Person identity: Jev disposes it, Bedrock's proposal is the fallback.
+  // Jev's answer is always a verbatim span from our own candidates, so it can
+  // neither invent a name nor pick someone merely mentioned for an intro
+  // (the "Ravi / David Okafor" class of mistake).
   let resolvedName = extracted.personName;
   let personSource = "bedrock";
-  if (isJudgeConfigured()) {
-    const roster = storeListPeople(userId).map((p) => p.name);
-    const picked = await resolvePersonName(text, [
-      ...roster,
-      ...findPersonSpans(text),
-      ...(extracted.personName ? [extracted.personName] : []),
-    ]);
-    if (picked?.name) {
-      resolvedName = picked.name;
-      personSource = "jev";
-    } else if (picked && picked.confidence >= 0.7) {
-      resolvedName = null;
-      personSource = "jev";
-    }
+  if (picked?.name) {
+    resolvedName = picked.name;
+    personSource = "jev";
+  } else if (picked && picked.confidence >= 0.7) {
+    resolvedName = null;
+    personSource = "jev";
   }
   extracted.personName = resolvedName;
 
@@ -229,7 +237,17 @@ export async function captureMemory(
   });
 
   const summary = buildCaptureSummary(person, factsAdded, commitmentsAdded);
-  return { memory, person, factsAdded, commitmentsAdded, summary };
+  return {
+    memory,
+    person,
+    factsAdded,
+    commitmentsAdded,
+    summary,
+    personSource,
+    personConfidence: picked?.confidence ?? null,
+    personDeclined: person === null,
+    walrusCertified: !!memory.walrus_blob_id,
+  };
 }
 
 function buildCaptureSummary(

@@ -51,9 +51,18 @@ export async function signOutAction(): Promise<void> {
 
 const captureSchema = z.string().min(1).max(4000);
 
-export async function captureAction(
-  rawText: string,
-): Promise<{ ok: true; summary: string } | { ok: false; error: string }> {
+export async function captureAction(rawText: string): Promise<
+  | {
+      ok: true;
+      summary: string;
+      person: string | null;
+      personSource: string;
+      personConfidence: number | null;
+      factsAdded: number;
+      commitmentsAdded: number;
+    }
+  | { ok: false; error: string }
+> {
   const userId = await requireUserId();
   try {
     if (!userActionLimiter.check(userId)) {
@@ -68,7 +77,15 @@ export async function captureAction(
     });
     revalidatePath("/workspace");
     log.info("capture", { userId, memoryId: result.memory.id, facts: result.factsAdded, commitments: result.commitmentsAdded });
-    return { ok: true, summary: result.summary };
+    return {
+      ok: true,
+      summary: result.summary,
+      person: result.person?.name ?? null,
+      personSource: result.personSource,
+      personConfidence: result.personConfidence,
+      factsAdded: result.factsAdded,
+      commitmentsAdded: result.commitmentsAdded,
+    };
   } catch (err) {
     log.error("capture_failed", { userId, error: err instanceof Error ? err.message : String(err) });
     return { ok: false, error: "Something went wrong saving that memory." };

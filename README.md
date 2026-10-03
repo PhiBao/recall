@@ -276,6 +276,17 @@ projection is future work (Walrus blobs are already Seal-encrypted).
 
 ---
 
+### Deliberate non-uses (measured, not assumed)
+
+- **`analyze()`** — Walrus Memory's server-side fact extraction works well
+  (`pnpm memwal:analyze` shows the output), but it returns each fact as its
+  own unattributed blob. Recall needs a *resolved person*, a *source-memory
+  citation*, and *commitments with due dates*, all in **one** record so a
+  recall returns something coherent. We keep our own extraction and store the
+  enriched record as a single blob.
+- **Walrus Sites / Oyster / Seal-direct** — out of scope: this is a chatbot
+  whose memory layer matters, not a static site host.
+
 ## Services used
 
 - **Walrus Memory (mainnet)** — the memory layer: encrypted blobs, semantic
