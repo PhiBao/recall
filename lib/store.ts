@@ -124,6 +124,7 @@ export function getUser(id: string): AppUser | null {
 export function upsertPerson(
   userId: string,
   profile: { name: string; headline: string | null; company: string | null; location: string | null },
+  opts?: { overwriteProfile?: boolean },
 ): { person: Person; created: boolean } {
   const store = loadStore();
   const found =
@@ -131,10 +132,18 @@ export function upsertPerson(
       (p) => p.user_id === userId && p.name.toLowerCase() === profile.name.toLowerCase(),
     ) ?? null;
   if (found) {
-    // Enrich sparse fields without overwriting existing values.
-    found.headline = found.headline ?? profile.headline;
-    found.company = found.company ?? profile.company;
-    found.location = found.location ?? profile.location;
+    if (opts?.overwriteProfile) {
+      // Grounded values are fresh evidence from a note: they replace stale
+      // ones, while nulls never wipe what an earlier capture established.
+      if (profile.headline !== null) found.headline = profile.headline;
+      if (profile.company !== null) found.company = profile.company;
+      if (profile.location !== null) found.location = profile.location;
+    } else {
+      // Enrich sparse fields without overwriting existing values.
+      found.headline = found.headline ?? profile.headline;
+      found.company = found.company ?? profile.company;
+      found.location = found.location ?? profile.location;
+    }
     found.last_interaction_at = now();
     found.updated_at = now();
     saveStore(store);

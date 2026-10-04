@@ -108,6 +108,9 @@ Return ONLY a JSON object with this exact shape:
 }
 Rules:
 - Extract only what is stated or clearly implied. Do NOT invent facts.
+- headline MUST be the person's current role/title exactly as stated in the note (e.g. if the note says "runs growth", the headline is about growth — never upgrade it to "Founder", "CEO", or any title not in the text).
+- company MUST be just the organization name (e.g. "MIT", not "MIT working on retrieval systems").
+- Every word in headline/company/fact values should appear in (or be a direct shortening of) the note text.
 - attributes should be short snake_case keys (e.g. "role", "interest", "hiring_for", "kid_name").
 - If no person is identifiable, personName is null.
 - Output JSON only, no prose.`;

@@ -124,6 +124,73 @@ describe("walrus namespace isolation", () => {
   });
 });
 
+describe("grounded profiles (no invented titles)", () => {
+  const TOMAS =
+    "Ran into Tomás Silva at the conference. He runs growth at Loop, a fintech in Lisbon.";
+  const SARAH =
+    "Met Sarah Chen at the SF AI meetup. She's a founder at Nimbus, building AI eval tooling, ex-Stripe.";
+
+  it("overwrites stale headlines with fresh grounded evidence", () => {
+    const u = createUser("overwrite@test.dev");
+    const first = upsertPerson(u.id, {
+      name: "Tomás Silva",
+      headline: "Founder @ Loop",
+      company: "Loop",
+      location: null,
+    });
+    expect(first.created).toBe(true);
+    // A later capture with grounded values replaces the stale headline;
+    // nulls never wipe established values.
+    const second = upsertPerson(
+      u.id,
+      { name: "Tomás Silva", headline: "Growth @ Loop", company: null, location: "Lisbon" },
+      { overwriteProfile: true },
+    );
+    expect(second.created).toBe(false);
+    expect(second.person.headline).toBe("Growth @ Loop");
+    expect(second.person.company).toBe("Loop");
+    expect(second.person.location).toBe("Lisbon");
+  });
+
+  it("rejects a title the note never states", async () => {
+    const { isGroundedIn, groundProfile } = await import("@/lib/memory");
+    expect(isGroundedIn("Founder @ Loop", TOMAS)).toBe(false);
+    expect(groundProfile({ headline: "Founder @ Loop", company: "Loop" }, TOMAS)).toEqual({
+      headline: null,
+      company: "Loop",
+    });
+  });
+
+  it("keeps titles the note does state", async () => {
+    const { groundProfile } = await import("@/lib/memory");
+    expect(
+      groundProfile({ headline: "Founder @ Nimbus, ex-Stripe", company: "Nimbus" }, SARAH),
+    ).toEqual({ headline: "Founder @ Nimbus, ex-Stripe", company: "Nimbus" });
+  });
+
+  it("normalizes a grounded verbatim headline for display", async () => {
+    const { normalizeHeadline } = await import("@/lib/memory");
+    expect(normalizeHeadline("runs growth @ Loop")).toBe("Runs growth @ Loop");
+    expect(normalizeHeadline("Partner @ Foundry")).toBe("Partner @ Foundry");
+    expect(normalizeHeadline(null)).toBeNull();
+  });
+
+  it("capture never stores an ungrounded headline", async () => {    const { __setJudgeClientForTests } = await import("@/lib/judge");
+    __setJudgeClientForTests({
+      systemOne: async () => {
+        throw new Error("offline");
+      },
+    } as never);
+    const { captureMemory } = await import("@/lib/memory");
+    const u = createUser("ground@test.dev");
+    const res = await captureMemory(u.id, TOMAS);
+    expect(res.person?.name).toBe("Tomás Silva");
+    // The mock extractor finds no headline pattern here — and crucially,
+    // nothing invents "Founder".
+    expect(res.person?.headline).not.toMatch(/founder/i);
+  });
+});
+
 describe("fast capture (deferred certification)", () => {
   it("saves the memory immediately and hands certification to defer", async () => {
     // Deterministic: force the Bedrock fallback path regardless of shell env.

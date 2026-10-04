@@ -80,6 +80,55 @@ export interface CaptureResult {
   walrusAttempts: number;
 }
 
+/** Words that carry no evidence in a headline/company ("Founder @ Acme"). */
+const GROUNDING_STOPWORDS = new Set([
+  "at", "a", "an", "the", "and", "&", "ex", "of", "in", "on", "for", "with",
+  "-", "–", "—", "|", "/", ",",
+]);
+
+/**
+ * True when every significant token of `value` appears in the source text.
+ *
+ * The extraction model occasionally invents display titles ("Founder @ Loop"
+ * for someone who "runs growth at Loop"). Anything not evidenced in the note
+ * is dropped rather than displayed — a missing headline is honest, a wrong
+ * one contradicts the user's own memory.
+ */
+export function isGroundedIn(value: string | null, text: string): boolean {
+  if (!value) return false;
+  const tokens = value
+    .toLowerCase()
+    .split(/[^a-zà-ÿ0-9]+/i)
+    .filter((t) => t.length > 2 && !GROUNDING_STOPWORDS.has(t));
+  if (tokens.length === 0) return false;
+  const hay = text.toLowerCase();
+  return tokens.every((t) => hay.includes(t));
+}
+
+/**
+ * Display normalization for a grounded headline. The stricter prompt makes the
+ * model quote the note verbatim ("runs growth @ Loop"), which reads badly
+ * next to a name — uppercase the first letter ("Runs growth @ Loop").
+ */
+export function normalizeHeadline(headline: string | null): string | null {
+  if (!headline) return null;
+  return headline.replace(/[a-zà-ÿ]/i, (c) => c.toUpperCase());
+}
+
+/**
+ * Ground an extraction against the note it came from. Returns headline and
+ * company with ungrounded parts removed (null when nothing survives).
+ */
+export function groundProfile(
+  extracted: { headline: string | null; company: string | null },
+  text: string,
+): { headline: string | null; company: string | null } {
+  return {
+    headline: isGroundedIn(extracted.headline, text) ? extracted.headline : null,
+    company: isGroundedIn(extracted.company, text) ? extracted.company : null,
+  };
+}
+
 /** The text actually persisted to Walrus: raw memory + its structured reading. */
 function buildWalrusText(
   rawText: string,
@@ -160,14 +209,27 @@ export async function captureMemory(
   }
   extracted.personName = resolvedName;
 
+  // Ground the display profile in the note it came from. The extraction model
+  // sometimes invents titles ("Founder @ Loop" for someone who "runs growth
+  // at Loop"); anything not evidenced is dropped rather than displayed.
+  const grounded = groundProfile(extracted, text);
+  extracted.headline = normalizeHeadline(grounded.headline);
+  extracted.company = grounded.company;
+
   let person: Person | null = null;
   if (resolvedName) {
-    person = upsertPerson(userId, {
-      name: resolvedName,
-      headline: extracted.headline,
-      company: extracted.company,
-      location: extracted.location,
-    }).person;
+    // Grounded values are fresh evidence, so they replace stale ones; nulls
+    // never wipe what an earlier capture established.
+    person = upsertPerson(
+      userId,
+      {
+        name: resolvedName,
+        headline: grounded.headline,
+        company: grounded.company,
+        location: extracted.location,
+      },
+      { overwriteProfile: true },
+    ).person;
   }
 
   // 2. Submit to Walrus (fast accept), then store the raw memory immediately
