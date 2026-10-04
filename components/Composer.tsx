@@ -4,6 +4,7 @@ import { useState, useRef, useTransition, useEffect } from "react";
 import Link from "next/link";
 import { captureAction, recallAction, routeAction } from "@/app/actions";
 import type { RecallAnswer } from "@/lib/types";
+import { RichText } from "./RichText";
 
 type Mode = "capture" | "recall";
 
@@ -219,7 +220,7 @@ function ThreadEntry({ entry }: { entry: Entry }) {
     <div className="flex justify-start">
       <div className="max-w-[90%] animate-fade-up space-y-2">
         <div className="rounded-2xl rounded-bl-sm bg-accent/10 px-4 py-2 text-sm text-ink">
-          {entry.text}
+          {entry.answer ? <RichText text={entry.text} /> : entry.text}
         </div>
         {entry.provenance && (
           <p
