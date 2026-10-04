@@ -27,6 +27,7 @@ import {
   extractMemory,
   rerankRecall,
   synthesizeRecall,
+  ABSTAIN_TEXT,
 } from "./ai";
 import type {
   Commitment,
@@ -346,7 +347,7 @@ export async function recall(
   } else {
     const recent = storeRecentMemories(userId, 12);
     if (recent.length === 0) {
-      return { answer: "I don't have a memory of that yet.", citations: [] };
+      return { answer: ABSTAIN_TEXT, citations: [] };
     }
     pool = recent.map((r) => ({
       id: r.id,
@@ -359,6 +360,9 @@ export async function recall(
   }
 
   // 2. Rank with calibrated judgments when available.
+  // Counting/listing questions need breadth, not just the top hit: keep the
+  // whole shortlist (ordered) so "how many founders" can count everyone.
+  const isAggregate = /\bhow many\b|\blist all\b|\bwho all\b|\bcount\b/i.test(q);
   let ranked = pool;
   let judged = false;
   if (isJudgeConfigured()) {
@@ -372,11 +376,13 @@ export async function recall(
     if (scored) {
       judged = true;
       const byScore = new Map(scored.map((s) => [s.id, s.score]));
-      ranked = pool
+      const ordered = pool
         .map((p) => ({ ...p, judgeScore: byScore.get(p.id) ?? 0 }))
-        .filter((p) => p.judgeScore >= RELEVANCE_MIN_SCORE)
-        .sort((a, b) => b.judgeScore - a.judgeScore)
-        .slice(0, limit);
+        .sort((a, b) => b.judgeScore - a.judgeScore);
+      ranked = (isAggregate ? ordered : ordered.filter((p) => p.judgeScore >= RELEVANCE_MIN_SCORE)).slice(
+        0,
+        limit,
+      );
       if (ranked.length === 0) {
         // Calibrated abstention: nothing relevant — skip synthesis entirely.
         audit(userId, "recall_abstain", {
@@ -385,7 +391,7 @@ export async function recall(
           candidates: pool.length,
           topScore: scored[0]?.score ?? null,
         });
-        return { answer: "I don't have a memory of that yet.", citations: [] };
+        return { answer: ABSTAIN_TEXT, citations: [] };
       }
     }
   }
@@ -423,6 +429,21 @@ export async function recall(
     })),
   );
 
+  // Contradiction guard: the UI must never show sources next to "don't know".
+  // Small models sometimes abstain out of caution despite relevant citations
+  // (notably counting and yes/no questions). In that case answer extractively
+  // from the citations instead of contradicting them.
+  let finalAnswer = answer;
+  if (answer.trim().startsWith(ABSTAIN_TEXT) && ranked.length > 0) {
+    audit(userId, "recall_extractive_fallback", {
+      candidates: ranked.length,
+      question: q.slice(0, 120),
+    });
+    finalAnswer = buildExtractiveAnswer(
+      ranked.map((r) => ({ personName: r.personName, content: r.content })),
+    );
+  }
+
   // 4. Verify every citation against its source memory (batched, one call).
   let citations: RecallCitation[] = ranked.map((r, i) => ({
     memoryId: r.id,
@@ -437,9 +458,9 @@ export async function recall(
     verified: null,
     checkConfidence: null,
   }));
-  if (isJudgeConfigured() && !answer.startsWith("I don't have a memory")) {
+  if (isJudgeConfigured() && !finalAnswer.trim().startsWith(ABSTAIN_TEXT)) {
     const verdicts = await verifyCitations(
-      ranked.map((r) => ({ id: r.id, claim: answer, source: r.content })),
+      ranked.map((r) => ({ id: r.id, claim: finalAnswer, source: r.content })),
     );
     if (verdicts) {
       citations = citations
@@ -463,12 +484,30 @@ export async function recall(
         .filter((c) => c.verified !== "contradicted");
       if (citations.length === 0) {
         audit(userId, "recall_abstain", { reason: "all_citations_contradicted" });
-        return { answer: "I don't have a memory of that yet.", citations: [] };
+        return { answer: ABSTAIN_TEXT, citations: [] };
       }
     }
   }
 
-  return { answer, citations };
+  return { answer: finalAnswer, citations };
+}
+
+/**
+ * Extractive fallback: state what the cited memories say, in plain words.
+ * Exported for tests. Used only when synthesis abstained despite relevant
+ * citations, so the UI can never show sources next to "I don't know".
+ * Grounded by construction — every sentence comes from a shown citation.
+ */
+export function buildExtractiveAnswer(
+  ranked: { personName: string | null; content: string }[],
+): string {
+  const parts = ranked.slice(0, 3).map((r) => {
+    const who = r.personName ?? "A note";
+    const what = r.content.trim().replace(/\s+/g, " ").slice(0, 220);
+    return `${who}: ${what}`;
+  });
+  const n = ranked.length;
+  return `Based on ${n} memor${n === 1 ? "y" : "ies"}: ${parts.join(" ")}`.slice(0, 700);
 }
 
 // --- People & profiles -----------------------------------------------------

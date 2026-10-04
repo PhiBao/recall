@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useTransition } from "react";
+import { useState, useRef, useTransition, useEffect } from "react";
 import Link from "next/link";
 import { captureAction, recallAction, routeAction } from "@/app/actions";
 import type { RecallAnswer } from "@/lib/types";
@@ -39,6 +39,16 @@ export function Composer({ hasPeople }: { hasPeople: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+
+  // Keep the latest message visible: the thread grows downward and the user
+  // should never have to scroll after asking.
+  useEffect(() => {
+    threadRef.current?.scrollTo({
+      top: threadRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [thread, isPending]);
 
   function pickMode(m: Mode) {
     setMode(m);
@@ -152,7 +162,10 @@ export function Composer({ hasPeople }: { hasPeople: boolean }) {
 
       {/* Thread */}
       {thread.length > 0 && (
-        <div className="scroll-slim mb-3 max-h-80 space-y-3 overflow-y-auto pr-1">
+        <div
+          ref={threadRef}
+          className="scroll-slim mb-3 max-h-80 space-y-3 overflow-y-auto pr-1"
+        >
           {thread.map((e) => (
             <ThreadEntry key={e.id} entry={e} />
           ))}

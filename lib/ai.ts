@@ -131,8 +131,12 @@ export async function extractMemory(text: string): Promise<ExtractedMemory> {
 
 const RECALL_SYSTEM = `You are the user's relationship memory. Answer the user's question using ONLY the provided memories.
 - Be concise and specific.
-- If the memories do not contain the answer, say "I don't have a memory of that yet." Do NOT guess or invent.
+- Consider ALL the provided memories, not just the first one.
+- Counting questions ("how many founders..."): count distinct people across ALL memories whose stated role matches, then name them. If only some match, say so explicitly (e.g. "One — Sarah Chen. Tomás runs growth, not a founder per your notes.").
+- Yes/no questions ("is X a founder?"): answer from what the memories state. If they don't say it, say what they DO say about X instead of claiming ignorance of X entirely (e.g. "Your notes don't say Tomás founded anything — they say he runs growth at Loop.").
+- If the memories truly contain nothing relevant to the question, say "I don't have a memory of that yet." Do NOT guess or invent.
 - Refer to people by name. Do not mention memory IDs.`;
+export const ABSTAIN_TEXT = "I don't have a memory of that yet.";
 
 const RERANK_SYSTEM = `You rank memories by relevance to a question.
 Return ONLY a JSON array of the indices (0-based) of the memories most relevant to the question, most relevant first, up to 5. Example: [2, 0, 4]
@@ -181,7 +185,7 @@ export async function synthesizeRecall(
   memories: { id: string; personName: string | null; content: string; occurredAt: string }[],
 ): Promise<string> {
   if (memories.length === 0) {
-    return "I don't have a memory of that yet.";
+    return ABSTAIN_TEXT;
   }
   if (isMockAI()) return mockRecall(question, memories);
   try {
