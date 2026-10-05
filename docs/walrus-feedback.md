@@ -28,4 +28,5 @@ Relayer: `https://relayer.memory.walrus.xyz` (mainnet)
 
 ## Filed issues
 
-- [ ] _(link each filed issue here once submitted during Sep 18–Oct 9)_
+- [x] Rate-limit bursts → silent blob loss — https://github.com/MystenLabs/MemWal/issues/1114
+- [x] No per-blob/per-namespace expiry visibility — https://github.com/MystenLabs/MemWal/issues/1115

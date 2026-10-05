@@ -17,27 +17,35 @@ repo exists to serve it.
 > ### 🚀 Live demo
 > **https://recall-walrus-memory.fly.dev** — deployed on Fly.io
 > (single 256MB machine + persistent volume), backed by Walrus Memory on
-> mainnet. Sign in with any email (or `demo@recall.app` for seeded
-> Hosting, backed by Walrus Memory on mainnet. Sign in with any email (or
-> `demo@recall.app` for seeded data). Health + blob proof:
-> `GET /api/health` → `counts.walrus_blobs`.
+> mainnet. Sign in with any email (or `demo@recall.app` for seeded data).
+> Health + blob proof: `GET /api/health` → `counts.walrus_blobs`.
 
 ---
 
-## Why this is a real product (not a dashboard)
+## The problem
 
-- **User problem:** People with large networks (founders, salespeople,
-  recruiters, investors, community builders) forget names, context, and
-  promises. Existing CRMs are heavy data-entry tools; note apps don't
-  *recall*. The pain is frequent, emotionally charged (embarrassment, lost
-  deals), and poorly served.
-- **The wedge:** capture is *conversational* (one sentence), recall is *cited*
-  (never invented), and follow-up is *proactive* (a daily nudge). No forms, no
-  pipeline stages, no admin panel.
-- **The moat is the memory:** value compounds the more you tell it — and
-  because that memory lives on Walrus, it is **portable across sessions, apps,
-  and providers**, encrypted by default, and independently verifiable. Your
-  network is yours, not your app's.
+People with large networks — founders, salespeople, recruiters, investors,
+community builders — forget names, context, and promises every day. The pain
+is frequent and emotionally charged (embarrassment, lost deals, relationships
+quietly going cold), and existing tools fail on both sides: CRMs demand
+form-filling nobody sustains; note apps store text but never *answer*
+anything. Nobody has closed the loop — conversational capture, cited recall,
+proactive follow-up — in one product.
+
+## What it does
+
+- **Remember:** one sentence in — *"Met Sarah at the AI meetup, she's hiring
+  React devs, I promised to intro her to Priya."* Recall extracts the person,
+  the durable facts, and the follow-ups, and persists the enriched record as
+  an encrypted Walrus blob. People are the wedge, not the ceiling: a note
+  with no name is still stored, recalled, and cited.
+- **Recall:** ask in plain language, get a natural-language answer grounded in
+  the *exact* memories it came from — each with a relevance score and a
+  machine-checked ✓ verdict. Unknown questions get an honest "I don't have a
+  memory of that yet" instead of a hallucination.
+- **Follow through:** every promise becomes a Today-feed item with a
+  pre-drafted reconnect message, and stale relationships resurface through a
+  daily nudge. Memory that changes what you *do*, not just what you read.
 
 ---
 
@@ -177,6 +185,34 @@ docs/
   video-script.md        Before/after demo recording script
   walrus-feedback.md     Session feedback draft + bug-bounty tracker
 ```
+---
+
+## Vision & roadmap
+
+Memory should be infrastructure, not a feature: portable across sessions,
+apps, and providers; encrypted by default; owned by the user, not the app.
+Recall is the first client of that thesis — a companion whose store outlives
+it (delete the local index and it still answers; `pnpm memwal:durability`
+proves it).
+
+Post-session roadmap: multi-turn conversation; Sui-wallet sign-in alongside
+email; shared team/family namespaces; proactive digests (email/Telegram)
+instead of pull-only Today; a Telegram/WhatsApp channel so capture happens
+where life happens; blob-expiry renewal UX ahead of the ~2-year horizon.
+
+## GTM plan
+
+1. **Wedge where forgetting costs most:** founder, sales, recruiting, and
+   community-builder circles — the article and promo go to those communities,
+   not crypto channels.
+2. **Single-player value first:** one user, one namespace, compounding memory.
+   No team sale, no onboarding call, no admin panel.
+3. **Distribution through agents:** native Walrus MCP (`memwal_*`) plus
+   Recall's per-user MCP server put the same memory inside Claude Code and
+   Cursor, where builders already live.
+4. **Monetization later:** hosted namespaces with renewal guarantees for pros
+   and teams; Walrus stays the store.
+
 ---
 
 ## Getting started
